@@ -37,6 +37,21 @@ def generate_baseline(n: int, seed: int = 42) -> pd.DataFrame:
     emg_envelope = rng.normal(loc=0.3, scale=0.1, size=n)
     motion_magnitude = rng.normal(loc=1.0, scale=0.15, size=n)
 
+    # Add temporal autocorrelation using an AR(1) process
+    for col_name, col_arr, col_mean, col_std in [
+        ("heart_rate", heart_rate, 72.0, 5.0),
+        ("emg_envelope", emg_envelope, 0.3, 0.1),
+        ("motion_magnitude", motion_magnitude, 1.0, 0.15),
+    ]:
+        alpha = 0.95  # autocorrelation coefficient
+        noise_std = col_std * np.sqrt(1 - alpha**2)
+        for i in range(1, n):
+            col_arr[i] = (
+                alpha * col_arr[i - 1]
+                + (1 - alpha) * col_mean
+                + rng.normal(0, noise_std)
+            )
+
     # Clip to physically plausible ranges
     heart_rate = np.clip(heart_rate, 40, 120)
     emg_envelope = np.clip(emg_envelope, 0.0, 3.0)

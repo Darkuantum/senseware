@@ -47,6 +47,7 @@ const ble = useBluetooth()
 const MAX_POINTS = 60
 
 const hrData = ref([])
+const spo2Data = ref([])
 const emgData = ref([])
 const motionData = ref([])
 const labels = ref([])
@@ -59,12 +60,13 @@ let unsubscribers = []
 
 onMounted(() => {
   unsubscribers.push(
-    ble.on('telemetry', ({ heartRate, emgEnvelope, motionMagnitude }) => {
+    ble.on('telemetry', ({ heartRate, spo2, emgEnvelope, motionMagnitude }) => {
       const now = new Date()
       const timeLabel = now.toLocaleTimeString('en-US', { hour12: false })
 
       labels.value.push(timeLabel)
       hrData.value.push(heartRate)
+      spo2Data.value.push(spo2)
       emgData.value.push(emgEnvelope)
       motionData.value.push(motionMagnitude)
 
@@ -72,6 +74,7 @@ onMounted(() => {
       if (labels.value.length > MAX_POINTS) {
         labels.value.shift()
         hrData.value.shift()
+        spo2Data.value.shift()
         emgData.value.shift()
         motionData.value.shift()
       }
@@ -91,6 +94,18 @@ const chartData = computed(() => ({
       data: hrData.value,
       borderColor: '#ef4444',
       backgroundColor: 'rgba(239, 68, 68, 0.1)',
+      fill: true,
+      tension: 0.4,
+      borderWidth: 2,
+      pointRadius: 0,
+      pointHoverRadius: 4,
+      yAxisID: 'y',
+    },
+    {
+      label: 'SpO2 (%)',
+      data: spo2Data.value,
+      borderColor: '#a78bfa',
+      backgroundColor: 'rgba(167, 139, 250, 0.1)',
       fill: true,
       tension: 0.4,
       borderWidth: 2,
@@ -171,7 +186,7 @@ const chartOptions = {
     x: {
       grid: {
         color: 'rgba(51, 65, 85, 0.3)',
-        drawBorder: false,
+        border: { display: false },
       },
       ticks: {
         color: '#64748b',
@@ -186,13 +201,13 @@ const chartOptions = {
       position: 'left',
       title: {
         display: true,
-        text: 'BPM',
+        text: 'BPM / SpO2',
         color: '#ef4444',
         font: { size: 11, weight: '600' },
       },
       grid: {
         color: 'rgba(51, 65, 85, 0.3)',
-        drawBorder: false,
+        border: { display: false },
       },
       ticks: {
         color: '#64748b',
@@ -220,12 +235,6 @@ const chartOptions = {
       },
     },
   },
-}
-</script>
-
-<script>
-export default {
-  compatConfig: { MODE: 3 },
 }
 </script>
 

@@ -25,6 +25,7 @@
 **Goal:** Establish a flawless, timestamped stream of synchronized physiological data without blocking the main loop.
 
 1. **RTOS Architecture:** Implement FreeRTOS tasks. Create one high-frequency task for polling the EMG (analog GPIO 34) and a separate task driven by hardware interrupts to pull data from the MAX30102 (I2C) and MPU-9250 (I2C) FIFO buffers.
+   - **EMG:** Uses the official OYMotion EMGFilters library (bandpass 20–150 Hz, 50 Hz notch) sampling at exactly 1000 Hz.
 2. **Signal Integration:** Incorporate the raw sensor interpretation logic. Convert raw ADC values and PPG waveforms into smoothed variables (e.g., `current_HR`, `current_EMG_envelope`).
 3. **Data Struct:** Define a C++ `struct` to hold a unified snapshot of the user's current state (Heart Rate, EMG Tension, IMU Motion).
 4. **Validation:** Output this struct to the serial port and display the live metrics on the SH1106 OLED.
@@ -34,7 +35,7 @@
 ## Phase 2: Data Collection (Baseline Logging)
 **Goal:** Capture high-fidelity "calm" baseline data to train the anomaly detection model.
 
-1. **Logging Firmware:** Modify the Phase 1 firmware to output the synchronized data struct over the serial port in a strict CSV format (e.g., `Timestamp, HR, EMG_Tension, Motion_Magnitude`).
+1. **Logging Firmware:** Modify the Phase 1 firmware to output the synchronized data struct over the serial port in a strict CSV format (e.g., `millis,heart_rate,spo2,emg_envelope,motion_magnitude,alert`).
 2. **Data Capture:** Instruct the user to run a Python logging script (using `pyserial`) in WSL to capture this serial stream to a `.csv` file during a controlled, relaxed 15-30 minute session.
 
 ---
@@ -51,8 +52,10 @@
 ## Phase 4: Edge AI Integration
 **Goal:** Run the trained model natively on the ESP32 to trigger closed-loop haptic interventions.
 
-1. **Library Integration:** Install and include the `EloquentTinyML` library. Import the `.tflite` model header.
+1. **Library Integration:** Install and include the `Chirale_TensorFlowLite` library (TFLite Micro C++ API). Import the `.tflite` model header.
+   - **Heart Rate:** Uses the official DFRobot_BloodOxygen_S library with INT pin (GPIO 4) for interrupt-driven heart rate reads.
 2. **Inference Task:** Create a new FreeRTOS task. At set intervals, this task normalizes the latest Phase 1 data struct, feeds it into the autoencoder, and calculates the reconstruction error.
+   - **Adaptive Threshold:** The system learns the user's baseline reconstruction error over time, continuously adjusting the anomaly detection threshold.
 3. **Closed-Loop Trigger:** If the reconstruction error exceeds the established threshold, trigger the native ESP32 v3.x `ledcWrite()` functions to fire the haptic motor (GPIO 25) and update the OLED with an intervention prompt.
 
 ---
@@ -72,3 +75,4 @@
 
 1. **Web App Construction:** Build a lightweight dashboard (e.g., React or Vue) utilizing the Web Bluetooth API to connect directly to the ESP32 from a standard Chrome browser.
 2. **Visualization:** Subscribe to the BLE characteristics to chart the physiological data streams in real-time and maintain a log of triggered interventions.
+   - **BLE Telemetry Payload:** 16 bytes packed as 4 floats: HR, SpO2, EMG envelope, Motion magnitude.

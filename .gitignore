@@ -15,11 +15,13 @@ dist/
 .venv/
 venv/
 .env
+.ruff_cache/
 
 # OS junk
 .DS_Store
 Thumbs.db
 *.Zone.Identifier
+*:Zone.Identifier
 
 # IDE
 .vscode/

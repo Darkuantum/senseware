@@ -76,6 +76,16 @@ def load_data(data_path: Path) -> pd.DataFrame:
         print(f"  Available columns: {list(data.columns)}", file=sys.stderr)
         sys.exit(1)
 
+    # Check for NaN/Inf
+    nan_count = data.isna().sum().sum()
+    inf_count = np.isinf(data.select_dtypes(include=[np.number])).sum().sum()
+    if nan_count > 0 or inf_count > 0:
+        print(
+            f"WARNING: Data contains {nan_count} NaN and {inf_count} Inf values. Dropping affected rows."
+        )
+        data = data.replace([np.inf, -np.inf], np.nan).dropna()
+        print(f"  Rows after cleanup: {len(data)}")
+
     return data[FEATURE_COLS]
 
 
@@ -144,10 +154,11 @@ def inject_anomalies(
     """Return a copy of *data* with *fraction* of rows corrupted to simulate
     stress / sensor spikes.
 
+    *data* should be **raw** (un-normalized) sensor values.
+
     Corruption strategy per anomalous row:
       - Multiply each feature by a random factor in [2, 10].
-      - Add Gaussian noise (std = 0.5 × original feature value).
-      - Clip to plausible sensor range.
+      - Add Gaussian noise with std = 5.
     """
     rng = np.random.default_rng(seed)
     corrupted = data.copy()
@@ -160,11 +171,10 @@ def inject_anomalies(
         multiplier = rng.uniform(2.0, 10.0, size=data.shape[1])
         corrupted[idx] = corrupted[idx] * multiplier
 
-        # Add Gaussian noise proportional to feature magnitude
-        noise_std = 0.5 * np.abs(corrupted[idx])
-        corrupted[idx] += rng.normal(0, noise_std)
+        # Add Gaussian noise
+        corrupted[idx] += rng.normal(0, 5.0, size=data.shape[1])
 
-    # Clip to reasonable sensor ranges
+    # Clip to reasonable sensor ranges (raw space)
     corrupted[:, 0] = np.clip(corrupted[:, 0], 40, 250)  # heart_rate
     corrupted[:, 1] = np.clip(corrupted[:, 1], 0.0, 10.0)  # emg_envelope
     corrupted[:, 2] = np.clip(corrupted[:, 2], 0.0, 20.0)  # motion_magnitude
@@ -189,17 +199,22 @@ def validate_threshold(
     model: keras.Model,
     threshold: float,
     norm_params: dict,
-    train_data: np.ndarray,
+    test_norm: np.ndarray,
+    test_raw: np.ndarray,
 ) -> None:
-    """Inject anomalies into training data and report detection rates."""
-    # Normalize the raw training data first (it's already normalized, but
-    # we need raw data for injection so we re-normalize after).
-    # Actually, train_data is already normalized. We inject anomalies on
-    # the normalized data to simulate out-of-distribution inputs.
-    anomalous_norm = inject_anomalies(train_data, fraction=0.3, seed=99)
+    """Inject anomalies into the *test* set (out-of-sample) and report
+    detection rates.  This avoids the circular validation of using
+    training data for both calibration and evaluation."""
+    # Inject anomalies in raw space, then normalize
+    anomalous_raw = inject_anomalies(test_raw, fraction=0.3, seed=99)
+    anomalous_norm, _ = normalize(
+        pd.DataFrame(anomalous_raw, columns=FEATURE_COLS),
+        fit=False,
+        params=norm_params,
+    )
 
-    recon_normal = model.predict(train_data, verbose=0)
-    mse_normal = np.mean((train_data - recon_normal) ** 2, axis=1)
+    recon_normal = model.predict(test_norm, verbose=0)
+    mse_normal = np.mean((test_norm - recon_normal) ** 2, axis=1)
 
     recon_anomalous = model.predict(anomalous_norm, verbose=0)
     mse_anomalous = np.mean((anomalous_norm - recon_anomalous) ** 2, axis=1)
@@ -209,7 +224,7 @@ def validate_threshold(
 
     print()
     print("=" * 60)
-    print("THRESHOLD VALIDATION (injected anomalies)")
+    print("THRESHOLD VALIDATION (out-of-sample, test set)")
     print("=" * 60)
     print(f"  Threshold (mean + 3σ):  {threshold:.6f}")
     print(
@@ -444,8 +459,10 @@ def main() -> None:
     print(f"  Threshold saved: {threshold_path}")
     print(f"  Anomaly threshold (MSE): {threshold:.6f}")
 
-    # Validate with injected anomalies
-    validate_threshold(model, threshold, norm_params, train_norm)
+    # Validate with injected anomalies (out-of-sample: test set)
+    validate_threshold(
+        model, threshold, norm_params, test_norm, test_df.values.astype(np.float32)
+    )
 
     # ------------------------------------------------------------------
     # 7. Export TFLite
@@ -460,6 +477,35 @@ def main() -> None:
     # ------------------------------------------------------------------
     print()
     export_c_header(tflite_path, header_path)
+
+    # ------------------------------------------------------------------
+    # 8b. Verify TFLite accuracy
+    # ------------------------------------------------------------------
+    print()
+    print("Verifying TFLite model accuracy against Keras model…")
+    interpreter = tf.lite.Interpreter(model_path=str(tflite_path))
+    interpreter.allocate_tensors()
+    input_detail = interpreter.get_input_details()
+    output_detail = interpreter.get_output_details()
+
+    # Test with a few samples
+    test_samples = test_norm[:10]
+    for i, sample in enumerate(test_samples):
+        interpreter.set_tensor(
+            input_detail[0]["index"], sample.reshape(1, -1).astype(np.float32)
+        )
+        interpreter.invoke()
+        tflite_output = interpreter.get_tensor(output_detail[0]["index"])[0]
+        keras_output = model.predict(sample.reshape(1, -1), verbose=0)[0]
+        if not np.allclose(tflite_output, keras_output, atol=1e-5):
+            print(f"WARNING: TFLite output diverges from Keras for sample {i}")
+            print(f"  Keras:  {keras_output}")
+            print(f"  TFLite: {tflite_output}")
+            break
+    else:
+        print(
+            "  TFLite model accuracy verified: all outputs match Keras model (atol=1e-5)"
+        )
 
     # ------------------------------------------------------------------
     # Summary

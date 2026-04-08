@@ -26,6 +26,13 @@
           :decimals="0"
         />
         <VitalsCard
+          label="SpO2"
+          :value="spo2"
+          unit="%"
+          color="purple"
+          :decimals="1"
+        />
+        <VitalsCard
           label="EMG Tension"
           :value="emgEnvelope"
           unit="μV"
@@ -66,6 +73,7 @@ import { useBluetooth } from './composables/useBluetooth.js'
 const ble = useBluetooth()
 
 const heartRate = ref(0)
+const spo2 = ref(0)
 const emgEnvelope = ref(0)
 const motionMagnitude = ref(0)
 
@@ -73,8 +81,9 @@ const unsubscribers = []
 
 onMounted(() => {
   unsubscribers.push(
-    ble.on('telemetry', ({ heartRate: hr, emgEnvelope: emg, motionMagnitude: motion }) => {
+    ble.on('telemetry', ({ heartRate: hr, spo2: sp, emgEnvelope: emg, motionMagnitude: motion }) => {
       heartRate.value = hr
+      spo2.value = sp
       emgEnvelope.value = emg
       motionMagnitude.value = motion
     })
@@ -84,6 +93,7 @@ onMounted(() => {
   unsubscribers.push(
     ble.on('disconnected', () => {
       heartRate.value = 0
+      spo2.value = 0
       emgEnvelope.value = 0
       motionMagnitude.value = 0
     })
@@ -162,10 +172,10 @@ onUnmounted(() => {
   gap: 1.5rem;
 }
 
-/* Vitals Row */
+/* Vitals Row — 4 cards now */
 .vitals-row {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 1rem;
 }
 
@@ -202,7 +212,7 @@ onUnmounted(() => {
 
 @media (max-width: 640px) {
   .vitals-row {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, 1fr);
   }
 
   .header-content {

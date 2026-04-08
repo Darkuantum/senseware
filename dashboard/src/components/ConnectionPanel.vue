@@ -26,7 +26,7 @@
       <strong>HTTPS</strong> or <strong>localhost</strong>.
     </p>
 
-    <p v-if="isSupported && !isLocalhost" class="hint">
+    <p v-if="isSupported && !isSecureContext" class="hint">
       Web Bluetooth requires HTTPS. Make sure this page is served over a secure
       connection or via localhost.
     </p>
@@ -41,7 +41,8 @@ const ble = useBluetooth()
 
 const state = ref(STATE.DISCONNECTED)
 const deviceName = ref('')
-const isLocalhost = ref(false)
+// Fix #7: Use isSecureContext instead of hostname check
+const isSecureContext = ref(false)
 const isSupported = ble.isSupported
 const isAlerting = ref(false)
 
@@ -75,8 +76,7 @@ const statusLabel = computed(() => {
 })
 
 onMounted(() => {
-  isLocalhost.value = window.location.hostname === 'localhost' ||
-    window.location.hostname === '127.0.0.1'
+  isSecureContext.value = window.isSecureContext
 })
 
 const unsubscribers = []
@@ -130,12 +130,6 @@ async function handleToggle() {
       // User cancelled or error — handled in composable
     }
   }
-}
-</script>
-
-<script>
-export default {
-  compatConfig: { MODE: 3 },
 }
 </script>
 

@@ -5,6 +5,9 @@ const SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b'
 const TELEMETRY_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8'
 const ALERT_UUID = '1c95d6e4-5dc9-4659-9290-43283a3b8d5a'
 
+const MAX_RECONNECT_ATTEMPTS = 10
+const BASE_DELAY = 3000
+
 export const STATE = {
   DISCONNECTED: 'disconnected',
   CONNECTING: 'connecting',
@@ -22,7 +25,10 @@ class BluetoothManager {
     this.alertChar = null
     this.listeners = new Map()
     this.reconnectTimer = null
-    this.lastValues = { heartRate: 0, emgEnvelope: 0, motionMagnitude: 0 }
+    this.lastValues = { heartRate: 0, spo2: 0, emgEnvelope: 0, motionMagnitude: 0 }
+    this._intentionalDisconnect = false
+    this._onDisconnected = null
+    this._reconnectAttempts = 0
   }
 
   get isConnected() {
@@ -83,16 +89,26 @@ class BluetoothManager {
 
       this.emit('deviceFound', { name: this.device.name })
 
-      // Listen for disconnection from device side
-      this.device.addEventListener('gattserverdisconnected', () => {
+      // Remove previous listener to prevent accumulation (#2)
+      if (this._onDisconnected && this.device) {
+        this.device.removeEventListener('gattserverdisconnected', this._onDisconnected)
+      }
+
+      // Listen for disconnection from device side (#1: respect intentional flag)
+      this._onDisconnected = () => {
         console.warn('[BLE] Device disconnected unexpectedly')
         this.telemetryChar = null
         this.alertChar = null
         this.server = null
         this.setState(STATE.DISCONNECTED)
-        this.emit('telemetry', { heartRate: 0, emgEnvelope: 0, motionMagnitude: 0 })
-        this.attemptReconnect()
-      })
+        this.emit('telemetry', { heartRate: 0, spo2: 0, emgEnvelope: 0, motionMagnitude: 0 })
+        if (!this._intentionalDisconnect) {
+          this._reconnectAttempts = 0
+          this.attemptReconnect()
+        }
+        this._intentionalDisconnect = false
+      }
+      this.device.addEventListener('gattserverdisconnected', this._onDisconnected)
 
       // Connect GATT
       this.server = await this.device.gatt.connect()
@@ -118,6 +134,7 @@ class BluetoothManager {
         this._handleAlert.bind(this)
       )
 
+      this._reconnectAttempts = 0
       this.setState(STATE.CONNECTED)
       this.emit('connected', { name: this.device.name })
       console.info('[BLE] Connected to', this.device.name)
@@ -135,7 +152,9 @@ class BluetoothManager {
   }
 
   async disconnect() {
+    this._intentionalDisconnect = true
     this._clearReconnectTimer()
+    this._reconnectAttempts = 0
 
     if (!this.device?.gatt?.connected) {
       this.setState(STATE.DISCONNECTED)
@@ -159,7 +178,17 @@ class BluetoothManager {
   attemptReconnect() {
     if (this.reconnectTimer) return
 
-    console.info('[BLE] Will attempt reconnection in 3s...')
+    // Retry cap (#10)
+    this._reconnectAttempts++
+    if (this._reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
+      this.setState(STATE.DISCONNECTED)
+      this.emit('error', { message: `Reconnect failed after ${MAX_RECONNECT_ATTEMPTS} attempts` })
+      this._clearReconnectTimer()
+      return
+    }
+
+    const delay = BASE_DELAY * Math.min(this._reconnectAttempts, 5)
+    console.info(`[BLE] Will attempt reconnection in ${delay / 1000}s (attempt ${this._reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`)
     this.reconnectTimer = setTimeout(async () => {
       this.reconnectTimer = null
 
@@ -189,6 +218,7 @@ class BluetoothManager {
           this._handleAlert.bind(this)
         )
 
+        this._reconnectAttempts = 0
         this.setState(STATE.CONNECTED)
         this.emit('reconnected', { name: this.device.name })
         console.info('[BLE] Reconnected successfully')
@@ -197,7 +227,7 @@ class BluetoothManager {
         this.setState(STATE.DISCONNECTED)
         this.attemptReconnect()
       }
-    }, 3000)
+    }, delay)
   }
 
   _clearReconnectTimer() {
@@ -208,26 +238,32 @@ class BluetoothManager {
   }
 
   /**
-   * Parse telemetry notification: 12 bytes = 3 little-endian Float32
+   * Parse telemetry notification: 16 bytes = 4 little-endian Float32
    *   offset 0:  heart_rate (BPM)
-   *   offset 4:  emg_envelope (μV)
-   *   offset 8:  motion_magnitude (g)
+   *   offset 4:  spo2 (%)
+   *   offset 8:  emg_envelope (μV)
+   *   offset 12: motion_magnitude (g)
    */
   _handleTelemetry(event) {
-    const view = new DataView(event.target.value.buffer)
+    // Fix #8: event.target.value is already a DataView — no wrapping needed
+    const view = event.target.value
 
-    const heartRate = view.getFloat32(0, true)        // little-endian
-    const emgEnvelope = view.getFloat32(4, true)       // little-endian
-    const motionMagnitude = view.getFloat32(8, true)   // little-endian
+    if (view.byteLength >= 16) {
+      const heartRate = view.getFloat32(0, true)        // little-endian
+      const spo2 = view.getFloat32(4, true)             // little-endian
+      const emgEnvelope = view.getFloat32(8, true)       // little-endian
+      const motionMagnitude = view.getFloat32(12, true)   // little-endian
 
-    this.lastValues = { heartRate, emgEnvelope, motionMagnitude }
+      this.lastValues = { heartRate, spo2, emgEnvelope, motionMagnitude }
 
-    this.emit('telemetry', {
-      heartRate,
-      emgEnvelope,
-      motionMagnitude,
-      timestamp: Date.now(),
-    })
+      this.emit('telemetry', {
+        heartRate,
+        spo2,
+        emgEnvelope,
+        motionMagnitude,
+        timestamp: Date.now(),
+      })
+    }
   }
 
   /**
@@ -243,6 +279,7 @@ class BluetoothManager {
       anomaly: isAnomaly,
       timestamp: Date.now(),
       heartRate: this.lastValues.heartRate,
+      spo2: this.lastValues.spo2,
       emgEnvelope: this.lastValues.emgEnvelope,
       motionMagnitude: this.lastValues.motionMagnitude,
     })

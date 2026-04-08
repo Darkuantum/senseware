@@ -6,9 +6,13 @@ Connects to the ESP32 over serial, reads the CSV telemetry stream, and
 records every row to a timestamped file under data/raw/.
 
 Expected serial format (one line per second, 115200 baud):
-    millis,heart_rate,emg_envelope,motion_magnitude
-    1234,72.0,0.45,1.02
+    millis,heart_rate,spo2,emg_envelope,motion_magnitude,alert
+    1234,72.0,98.0,0.45,1.02,0
     ...
+
+Accepts 4–6 columns for forwards compatibility.  The first 4
+(millis, heart_rate, emg_envelope, motion_magnitude) are always
+captured; extra columns (spo2, alert) are logged when present.
 
 Usage:
     python python/capture_baseline.py [--port PORT] [--duration MINUTES]
@@ -34,7 +38,8 @@ import serial.tools.list_ports
 # ---------------------------------------------------------------------------
 
 BAUD_RATE = 115200
-HEADER_LINE = "millis,heart_rate,emg_envelope,motion_magnitude"
+HEADER_LINE_MIN = "millis,heart_rate,emg_envelope,motion_magnitude"
+HEADER_LINE_FULL = "millis,heart_rate,spo2,emg_envelope,motion_magnitude,alert"
 RECONNECT_BACKOFF_INIT = 1.0  # seconds – doubles each failed attempt
 RECONNECT_BACKOFF_MAX = 30.0
 RECONNECT_BACKOFF_RESET = 5.0  # seconds of successful read before resetting
@@ -117,8 +122,11 @@ def capture(port: str, duration_minutes: float) -> None:
         log.error("Cannot create output file %s: %s", output_path, exc)
         sys.exit(1)
 
-    fh.write(HEADER_LINE + "\n")
+    # Write the minimal header; we may append extra columns later once we
+    # see the firmware header row.
+    fh.write(HEADER_LINE_MIN + "\n")
     fh.flush()
+    header_columns_seen = 4  # default: minimal 4-col header
 
     def cleanup() -> None:
         fh.flush()
@@ -211,6 +219,29 @@ def capture(port: str, duration_minutes: float) -> None:
             if raw.lower().startswith("millis"):
                 header_seen = True
                 consecutive_success = 0.0
+                # Detect how many columns the firmware is sending.
+                fw_cols = len(raw.split(","))
+                if fw_cols != header_columns_seen:
+                    # Firmware has more (or fewer) columns than what we wrote.
+                    # Rewrite the CSV header to match.
+                    if fw_cols >= 6:
+                        new_header = HEADER_LINE_FULL
+                    elif fw_cols >= 5:
+                        # 5-column: millis,heart_rate,spo2,emg_envelope,motion_magnitude
+                        new_header = ",".join(HEADER_LINE_FULL.split(",")[:5])
+                    else:
+                        new_header = HEADER_LINE_MIN
+                    if new_header != HEADER_LINE_MIN:
+                        # Rewrite the header in the output file
+                        fh.seek(0)
+                        fh.truncate()
+                        fh.write(new_header + "\n")
+                        fh.flush()
+                        header_columns_seen = fw_cols
+                        log.info(
+                            "Firmware header has %d columns — updated output header.",
+                            fw_cols,
+                        )
                 continue
 
             # If we haven't seen the header yet, skip (boot text).
@@ -219,9 +250,14 @@ def capture(port: str, duration_minutes: float) -> None:
 
             # ---- Validate the data row ----
             parts = raw.split(",")
-            if len(parts) != 4:
-                # Malformed row — skip but don't treat as a connection error.
-                log.debug("Skipping malformed row: %s", raw)
+            if len(parts) < 4:
+                # Too few columns — skip but don't treat as a connection error.
+                log.debug("Skipping row with < 4 columns: %s", raw)
+                continue
+
+            # Accept 4–6 columns (forwards compatibility).
+            if len(parts) > 6:
+                log.debug("Skipping row with > 6 columns: %s", raw)
                 continue
 
             # Quick sanity: each field should parse as a number.
@@ -232,6 +268,8 @@ def capture(port: str, duration_minutes: float) -> None:
                 continue
 
             # ---- Write to file ----
+            # Always write the full row as received so extra columns (spo2, alert)
+            # are preserved for richer data capture.
             fh.write(raw + "\n")
             row_count += 1
             consecutive_success += 1.0

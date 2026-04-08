@@ -15,13 +15,13 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onUnmounted } from 'vue'
 
 const props = defineProps({
   label: { type: String, required: true },
   value: { type: Number, default: 0 },
   unit: { type: String, default: '' },
-  color: { type: String, default: 'blue', validator: (v) => ['red', 'blue', 'green'].includes(v) },
+  color: { type: String, default: 'blue', validator: (v) => ['red', 'blue', 'green', 'purple'].includes(v) },
   decimals: { type: Number, default: 1 },
 })
 
@@ -36,6 +36,7 @@ const displayValue = computed(() => {
 const previousValue = ref(props.value)
 const trendValue = ref(0)
 const showTrend = ref(false)
+let trendTimer = null
 
 watch(
   () => props.value,
@@ -43,14 +44,21 @@ watch(
     if (oldVal !== null && oldVal !== undefined) {
       trendValue.value = newVal - oldVal
       showTrend.value = true
-      // Hide trend after 2s
-      setTimeout(() => {
+      // Fix #4: Clear previous timer to prevent leak
+      if (trendTimer) clearTimeout(trendTimer)
+      trendTimer = setTimeout(() => {
         showTrend.value = false
+        trendTimer = null
       }, 2000)
     }
     previousValue.value = newVal
   }
 )
+
+// Fix #4: Clean up timer on unmount
+onUnmounted(() => {
+  if (trendTimer) clearTimeout(trendTimer)
+})
 
 const trendDirection = computed(() =>
   trendValue.value >= 0 ? 'trend-up' : 'trend-down'
@@ -103,6 +111,12 @@ const trendArrow = computed(() =>
   box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
 }
 
+/* Fix #5: Purple/Blue theme for SpO2 */
+.card-purple .card-indicator {
+  background: #a78bfa;
+  box-shadow: 0 0 6px rgba(167, 139, 250, 0.5);
+}
+
 .card-label {
   font-size: 0.78rem;
   font-weight: 500;
@@ -135,6 +149,11 @@ const trendArrow = computed(() =>
 
 .card-green .card-value {
   color: #86efac;
+}
+
+/* Fix #5: Purple/Blue value color for SpO2 */
+.card-purple .card-value {
+  color: #c4b5fd;
 }
 
 .card-unit {
