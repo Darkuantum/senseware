@@ -1,0 +1,37 @@
+# ESP32 / Arduino build artifacts
+build/
+.pio/
+.clangd
+compile_commands.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+.venv/
+venv/
+.env
+
+# OS junk
+.DS_Store
+Thumbs.db
+*.Zone.Identifier
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Data / model artifacts
+*.tflite
+*.h5
+*.csv
+data/raw/
+models/
+
+# Logs
+*.log
