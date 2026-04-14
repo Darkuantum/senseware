@@ -29,6 +29,9 @@ class BluetoothManager {
     this._intentionalDisconnect = false
     this._onDisconnected = null
     this._reconnectAttempts = 0
+    // Stable bound references — prevents duplicate listeners on reconnect
+    this._boundHandleTelemetry = this._handleTelemetry.bind(this)
+    this._boundHandleAlert = this._handleAlert.bind(this)
   }
 
   get isConnected() {
@@ -121,18 +124,21 @@ class BluetoothManager {
       this.alertChar = await service.getCharacteristic(ALERT_UUID)
 
       // Subscribe to telemetry notifications
-      await this.telemetryChar.startNotifications()
+      // Fix #2A: register listener BEFORE startNotifications() to avoid
+      // losing the first notification if the ESP32 sends it immediately
+      // after the CCCD write is acknowledged.
       this.telemetryChar.addEventListener(
         'characteristicvaluechanged',
-        this._handleTelemetry.bind(this)
+        this._boundHandleTelemetry
       )
+      await this.telemetryChar.startNotifications()
 
-      // Subscribe to alert notifications
-      await this.alertChar.startNotifications()
+      // Subscribe to alert notifications (same ordering fix)
       this.alertChar.addEventListener(
         'characteristicvaluechanged',
-        this._handleAlert.bind(this)
+        this._boundHandleAlert
       )
+      await this.alertChar.startNotifications()
 
       this._reconnectAttempts = 0
       this.setState(STATE.CONNECTED)
@@ -163,6 +169,16 @@ class BluetoothManager {
 
     try {
       this.setState(STATE.DISCONNECTING)
+      // Fix #2C/#2E: remove listeners and stop notifications before disconnecting
+      // to prevent stale subscription state in the browser's BLE stack
+      if (this.telemetryChar) {
+        this.telemetryChar.removeEventListener('characteristicvaluechanged', this._boundHandleTelemetry)
+        try { await this.telemetryChar.stopNotifications() } catch { /* may already be stopped */ }
+      }
+      if (this.alertChar) {
+        this.alertChar.removeEventListener('characteristicvaluechanged', this._boundHandleAlert)
+        try { await this.alertChar.stopNotifications() } catch { /* may already be stopped */ }
+      }
       this.device.gatt.disconnect()
     } catch (err) {
       console.error('[BLE] Disconnect error:', err)
@@ -206,17 +222,19 @@ class BluetoothManager {
         this.telemetryChar = await service.getCharacteristic(TELEMETRY_UUID)
         this.alertChar = await service.getCharacteristic(ALERT_UUID)
 
-        await this.telemetryChar.startNotifications()
+        // Fix #2A/#2B: add listener BEFORE startNotifications;
+        // use stable bound refs so duplicates are avoided
         this.telemetryChar.addEventListener(
           'characteristicvaluechanged',
-          this._handleTelemetry.bind(this)
+          this._boundHandleTelemetry
         )
+        await this.telemetryChar.startNotifications()
 
-        await this.alertChar.startNotifications()
         this.alertChar.addEventListener(
           'characteristicvaluechanged',
-          this._handleAlert.bind(this)
+          this._boundHandleAlert
         )
+        await this.alertChar.startNotifications()
 
         this._reconnectAttempts = 0
         this.setState(STATE.CONNECTED)
@@ -245,24 +263,31 @@ class BluetoothManager {
    *   offset 12: motion_magnitude (g)
    */
   _handleTelemetry(event) {
-    // Fix #8: event.target.value is already a DataView — no wrapping needed
-    const view = event.target.value
+    // Fix #2D: wrap in try/catch — an unhandled error in this handler
+    // can cause Chrome to stop dispatching further characteristicvaluechanged
+    // events, silently freezing the data stream.
+    try {
+      // event.target.value is already a DataView — no wrapping needed
+      const view = event.target.value
 
-    if (view.byteLength >= 16) {
-      const heartRate = view.getFloat32(0, true)        // little-endian
-      const spo2 = view.getFloat32(4, true)             // little-endian
-      const emgEnvelope = view.getFloat32(8, true)       // little-endian
-      const motionMagnitude = view.getFloat32(12, true)   // little-endian
+      if (view.byteLength >= 16) {
+        const heartRate = view.getFloat32(0, true)        // little-endian
+        const spo2 = view.getFloat32(4, true)             // little-endian
+        const emgEnvelope = view.getFloat32(8, true)       // little-endian
+        const motionMagnitude = view.getFloat32(12, true)   // little-endian
 
-      this.lastValues = { heartRate, spo2, emgEnvelope, motionMagnitude }
+        this.lastValues = { heartRate, spo2, emgEnvelope, motionMagnitude }
 
-      this.emit('telemetry', {
-        heartRate,
-        spo2,
-        emgEnvelope,
-        motionMagnitude,
-        timestamp: Date.now(),
-      })
+        this.emit('telemetry', {
+          heartRate,
+          spo2,
+          emgEnvelope,
+          motionMagnitude,
+          timestamp: Date.now(),
+        })
+      }
+    } catch (err) {
+      console.error('[BLE] Telemetry parse error:', err)
     }
   }
 
@@ -272,17 +297,21 @@ class BluetoothManager {
    *   0x01 = anomaly (allostatic spike)
    */
   _handleAlert(event) {
-    const value = event.target.value.getUint8(0)
-    const isAnomaly = value === 0x01
+    try {
+      const value = event.target.value.getUint8(0)
+      const isAnomaly = value === 0x01
 
-    this.emit('alert', {
-      anomaly: isAnomaly,
-      timestamp: Date.now(),
-      heartRate: this.lastValues.heartRate,
-      spo2: this.lastValues.spo2,
-      emgEnvelope: this.lastValues.emgEnvelope,
-      motionMagnitude: this.lastValues.motionMagnitude,
-    })
+      this.emit('alert', {
+        anomaly: isAnomaly,
+        timestamp: Date.now(),
+        heartRate: this.lastValues.heartRate,
+        spo2: this.lastValues.spo2,
+        emgEnvelope: this.lastValues.emgEnvelope,
+        motionMagnitude: this.lastValues.motionMagnitude,
+      })
+    } catch (err) {
+      console.error('[BLE] Alert parse error:', err)
+    }
   }
 }
 

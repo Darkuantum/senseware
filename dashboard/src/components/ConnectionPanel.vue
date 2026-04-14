@@ -3,7 +3,7 @@
     <div class="panel-row">
       <button
         class="btn btn-primary"
-        :disabled="state === 'connecting' || !isSupported"
+        :disabled="state === 'connecting' || state === 'disconnecting' || !isSupported"
         @click="handleToggle"
       >
         <span v-if="state === 'connecting'" class="spinner" />
@@ -121,7 +121,7 @@ onUnmounted(() => {
 })
 
 async function handleToggle() {
-  if (state.value === STATE.CONNECTED || state.value === STATE.CONNECTING) {
+  if (state.value === STATE.CONNECTED || state.value === STATE.CONNECTING || state.value === STATE.DISCONNECTING) {
     await ble.disconnect()
   } else {
     try {

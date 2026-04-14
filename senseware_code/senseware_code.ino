@@ -164,8 +164,13 @@ std::atomic<bool> gAnomalyDetected{false};
 std::atomic<bool> deviceConnected{false};
 std::atomic<bool> oldDeviceConnected{false};
 
-// HR interrupt flag — set from ISR, cleared from sensorTask
-volatile bool hrDataReady = false;
+// HR polling mode — no interrupt flag needed (sensorTask polls every 4s)
+
+// =====================================================================
+// EMG EMA smoothing
+// =====================================================================
+float gEmgEMA = 0.0f;  // Exponential moving average of EMG envelope
+const float EMG_EMA_ALPHA = 0.01f;  // Smooth over ~100 samples at 1000Hz (~100ms)
 
 // =====================================================================
 // HAPTIC STATE (non-blocking, audit F-C1)
@@ -192,6 +197,27 @@ class ServerCallbacks : public BLEServerCallbacks {
     }
     void onDisconnect(BLEServer* pServer) override {
         deviceConnected.store(false);
+        Serial.println("[BLE] Device disconnected");
+    }
+};
+
+// BLE Characteristic Callbacks — detect notify failures via onStatus
+// notify() returns void — the only way to detect failures is this callback.
+class TelemetryCharCallbacks : public BLECharacteristicCallbacks {
+    void onStatus(BLECharacteristic *pChar, Status s, uint32_t code) override {
+        if (s == ERROR_GATT) {
+            Serial.printf("[BLE] Telemetry notify FAILED: 0x%04x\n", code);
+        } else if (s == ERROR_NOTIFY_DISABLED) {
+            Serial.println("[BLE] Telemetry: client disabled notifications");
+        }
+    }
+};
+
+class AlertCharCallbacks : public BLECharacteristicCallbacks {
+    void onStatus(BLECharacteristic *pChar, Status s, uint32_t code) override {
+        if (s == ERROR_GATT) {
+            Serial.printf("[BLE] Alert notify FAILED: 0x%04x\n", code);
+        }
     }
 };
 
@@ -203,7 +229,6 @@ void sensorTask(void* pvParameters);
 void displayTask(void* pvParameters);
 void serialTask(void* pvParameters);
 void inferenceTask(void* pvParameters);
-void IRAM_ATTR onHRInterrupt();
 
 // =====================================================================
 // SETUP
@@ -230,19 +255,25 @@ void setup() {
     Serial.println("MPU-9250 initialized.");
 
     // --- DFRobot BloodOxygen_S (SEN0344) ---
+    // IMPORTANT: The library's begin() calls Wire.begin() internally with NO
+    // arguments, which resets the I2C bus. On FireBeetle the default pins (21/22)
+    // match our explicit pins, but the reset can corrupt in-flight state.
+    // We re-initialize Wire AFTER the library's begin() to ensure clean state.
     Serial.println("Initializing BloodOxygen_S (SEN0344)...");
     if (!bloodOxygen.begin()) {
-        Serial.println("BloodOxygen_S not found. Halting.");
+        Serial.println("BloodOxygen_S not found on I2C 0x57. Halting.");
         while (1) { delay(1000); }
     }
-    bloodOxygen.sensorStartCollect();
-    Serial.println("BloodOxygen_S initialized. Collecting...");
+    // Re-init Wire to undo the library's begin() bus reset
+    Wire.begin(I2C_SDA, I2C_SCL);
+    Serial.println("BloodOxygen_S I2C probe OK. Re-initialized Wire bus.");
 
-    // --- HR Interrupt Pin ---
-    pinMode(HR_INT_PIN, INPUT_PULLUP);
-    attachInterrupt(digitalPinToInterrupt(HR_INT_PIN), onHRInterrupt, FALLING);
-    Serial.print("HR interrupt attached to GPIO ");
-    Serial.println(HR_INT_PIN);
+    // Start PPG collection — sensor MCU begins accumulating samples
+    bloodOxygen.sensorStartCollect();
+    Serial.println("BloodOxygen_S collecting. First valid reading in ~8 seconds.");
+
+    // --- HR polling will be handled in sensorTask (no interrupt needed) ---
+    Serial.println("HR: polling mode (4s interval, 8s warm-up)");
 
     // --- SH1106 OLED ---
     Serial.println("Initializing SH1106 OLED...");
@@ -283,11 +314,21 @@ void setup() {
     prefs.begin("senseware", true); // read-only
     float stored = prefs.getFloat("threshold", 0.0f);
     prefs.end();
-    if (stored > 0) {
+    if (stored > 0 && stored < INITIAL_THRESHOLD * 100.0f) {
         gAdaptiveThreshold = stored;
         Serial.print("[NVS] Loaded adaptive threshold: ");
         Serial.println(gAdaptiveThreshold, 6);
     } else {
+        if (stored > 0) {
+            Serial.print("[NVS] Stored threshold invalid (");
+            Serial.print(stored, 6);
+            Serial.println("), resetting");
+            Preferences prefsRW;
+            prefsRW.begin("senseware", false);
+            prefsRW.putFloat("threshold", INITIAL_THRESHOLD);
+            prefsRW.end();
+        }
+        gAdaptiveThreshold = INITIAL_THRESHOLD;
         Serial.print("[NVS] Using initial threshold: ");
         Serial.println(INITIAL_THRESHOLD, 6);
     }
@@ -380,6 +421,7 @@ void setup() {
     );
 
     // --- BLE GATT Server (Phase 5) ---
+    Serial.setDebugOutput(true);  // Enable verbose BLE stack logging
     BLEDevice::init("Senseware");
     pServer = BLEDevice::createServer();
     pServer->setCallbacks(new ServerCallbacks());
@@ -388,14 +430,16 @@ void setup() {
 
     pTelemetryChar = pService->createCharacteristic(
         TELEMETRY_CHAR_UUID,
-        BLECharacteristic::PROPERTY_NOTIFY
+        BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_READ
     );
+    pTelemetryChar->setCallbacks(new TelemetryCharCallbacks());
     pTelemetryChar->addDescriptor(new BLE2902());
 
     pAlertChar = pService->createCharacteristic(
         ALERT_CHAR_UUID,
-        BLECharacteristic::PROPERTY_NOTIFY
+        BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_READ
     );
+    pAlertChar->setCallbacks(new AlertCharCallbacks());
     pAlertChar->addDescriptor(new BLE2902());
 
     pService->start();
@@ -422,19 +466,30 @@ void loop() {
 // =====================================================================
 // HR INTERRUPT HANDLER
 // =====================================================================
-void IRAM_ATTR onHRInterrupt() {
-    hrDataReady = true;
-}
+// HR interrupt removed — using polling approach instead (see sensorTask)
 
 // =====================================================================
 // EMG TASK (Core 0) — Exactly 1000 Hz via vTaskDelayUntil
 // The EMGFilters library REQUIRES exactly 1000Hz sampling (1ms period).
 // =====================================================================
 void emgTask(void* pvParameters) {
-    TickType_t xLastWakeTime = xTaskGetTickCount();
-
     // Initialize EMGFilters: 1000Hz sample rate, 50Hz notch, all filters on
     emgFilter.init(SAMPLE_FREQ_1000HZ, NOTCH_FREQ_50HZ, true, true, true);
+
+    // Pre-settle the IIR filters: the HPF (20Hz) and LPF (150Hz) states start
+    // at zero. Feeding a constant ~2048 (sensor rest voltage at VCC/2) into
+    // zero-initialized IIR filters causes a startup transient lasting ~2 seconds
+    // where the output is thousands instead of ~0. Without this warm-up,
+    // the squared envelope gets ~70,000+ baked into the EMA and takes minutes
+    // to decay. Feed 2000 samples at 1ms each (~2 seconds) to settle.
+    for (int i = 0; i < 2000; i++) {
+        emgFilter.update(analogRead(EMG_PIN));
+        vTaskDelay(1);
+    }
+    gEmgEMA = 0.0f;  // Reset EMA after warm-up
+    Serial.println("[EMG] Filter warm-up complete (2000 samples)");
+
+    TickType_t xLastWakeTime = xTaskGetTickCount();
 
     for (;;) {
         // Read raw ADC and apply EMGFilters bandpass + notch
@@ -444,10 +499,13 @@ void emgTask(void* pvParameters) {
         // Rectified squared envelope
         float envelope = (float)(filtered * filtered);
 
+        // EMA smoothing — reduces noise while preserving signal dynamics
+        gEmgEMA = EMG_EMA_ALPHA * envelope + (1.0f - EMG_EMA_ALPHA) * gEmgEMA;
+
         // Write to shared state under mutex
         // F-C2: Do NOT write gState.timestamp — only sensorTask is authoritative
         if (xSemaphoreTake(gStateMutex, pdMS_TO_TICKS(2)) == pdTRUE) {
-            gState.emg_envelope = envelope;
+            gState.emg_envelope = gEmgEMA;
             xSemaphoreGive(gStateMutex);
         }
 
@@ -458,33 +516,127 @@ void emgTask(void* pvParameters) {
 }
 
 // =====================================================================
-// SENSOR TASK (Core 1) — I2C reads + HR interrupt-driven data
+// SENSOR TASK (Core 1) — I2C reads + HR polling
 // This is the authoritative timestamp writer (F-C2).
+//
+// DFRobot SEN0344 BloodOxygen_S library investigation notes:
+//   - sensorStartCollect() writes {0x00, 0x01} to register 0x20 (start PPG)
+//   - getHeartbeatSPO2() reads 8 bytes from register 0x0C via raw I2C
+//     rbuf[0]   = SPO2 (0 → invalid → library returns -1)
+//     rbuf[1]   = SPO2 valid flag (UNUSED by library)
+//     rbuf[2-5] = Heartbeat, big-endian uint32 (0 → invalid → -1)
+//     rbuf[6]   = Heartbeat valid flag (UNUSED by library)
+//     rbuf[7]   = unused
+//   - Library begin() calls Wire.begin() with no args — resets I2C bus.
+//     On FireBeetle, default pins (21/22) match ours, but the reset can
+//     corrupt in-flight I2C state. We re-init Wire after begin().
+//   - Sensor internal MCU needs ~4-8 seconds after sensorStartCollect()
+//     before the FIRST valid reading. Subsequent readings update every ~4s.
+//   - No INT pin usage needed — polling at 4s interval matches sensor rate.
+//   - Library returns SPO2/Heartbeat = -1 when no finger or still measuring.
 // =====================================================================
 void sensorTask(void* pvParameters) {
     TickType_t xLastWakeTime = xTaskGetTickCount();
+    unsigned long lastHRRead = 0;
+    unsigned long taskStart = millis();
+    const unsigned long HR_READ_INTERVAL_MS = 4000;   // sensor updates every ~4s
+    const unsigned long HR_WARMUP_MS        = 8000;   // sensor needs 4-8s for first reading
+    int hrReadCount = 0;
+    int hrValidCount = 0;
 
     for (;;) {
-        bool stateUpdated = false;
+        // --- HR + SpO2: poll at sensor update rate (every ~4 seconds) ---
+        unsigned long now = millis();
+        if (now - lastHRRead >= HR_READ_INTERVAL_MS) {
+            lastHRRead = now;
+            hrReadCount++;
 
-        // --- HR + SpO2: read when interrupt fires (every ~4 seconds) ---
-        if (hrDataReady) {
-            hrDataReady = false;
-            bloodOxygen.getHeartbeatSPO2();
+            // Skip first readings during sensor warm-up — the sensor's onboard MCU
+            // needs time to accumulate PPG samples before the first valid output.
+            // Without this, the first 1-2 reads return all zeros (SPO2=0, HR=0).
+            if (now - taskStart < HR_WARMUP_MS && hrReadCount <= 2) {
+                Serial.print("[HR] Skipping read #");
+                Serial.print(hrReadCount);
+                Serial.println(" (sensor warm-up)");
+            } else {
+                // Call the library's read method
+                bloodOxygen.getHeartbeatSPO2();
 
-            float hr   = (float)bloodOxygen._sHeartbeatSPO2.Heartbeat;
-            float spo2 = (float)bloodOxygen._sHeartbeatSPO2.SPO2;
+                int rawHR   = bloodOxygen._sHeartbeatSPO2.Heartbeat;
+                int rawSPO2 = bloodOxygen._sHeartbeatSPO2.SPO2;
 
-            if (xSemaphoreTake(gStateMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                gState.heart_rate = hr;
-                gState.spo2 = spo2;
-                gState.timestamp = millis();
-                xSemaphoreGive(gStateMutex);
-                stateUpdated = true;
+                // Also do a raw I2C probe to see exactly what register 0x0C contains
+                // This is diagnostic — helps identify if the sensor is responding at all
+                uint8_t rawBuf[8] = {0};
+                Wire.beginTransmission(0x57);
+                Wire.write(0x0C);
+                int wireStatus = Wire.endTransmission(false);  // false = send restart
+                int bytesRead = 0;
+                if (wireStatus == 0) {
+                    Wire.requestFrom(0x57, (uint8_t)8);
+                    bytesRead = Wire.available();
+                    for (int i = 0; i < 8 && Wire.available(); i++) {
+                        rawBuf[i] = Wire.read();
+                    }
+                }
+
+                // Log raw data for first 10 reads (diagnostic)
+                if (hrReadCount <= 10) {
+                    Serial.print("[HR] Read #");
+                    Serial.print(hrReadCount);
+                    Serial.print(" wireStatus=");
+                    Serial.print(wireStatus);
+                    Serial.print(" bytes=");
+                    Serial.print(bytesRead);
+                    Serial.print(" raw=[");
+                    for (int i = 0; i < 8; i++) {
+                        if (i > 0) Serial.print(" ");
+                        Serial.print(rawBuf[i], HEX);
+                    }
+                    Serial.print("] libSPO2=");
+                    Serial.print(rawSPO2);
+                    Serial.print(" libHR=");
+                    Serial.println(rawHR);
+                }
+
+                // Library returns -1 when no valid data (finger off / still measuring)
+                // Preserve this: only accept positive values as valid
+                float hr   = (rawHR   > 0) ? (float)rawHR   : 0.0f;
+                float spo2 = (rawSPO2 > 0) ? (float)rawSPO2 : 0.0f;
+
+                // Track first valid reading
+                if (rawHR > 0 && rawSPO2 > 0) {
+                    if (hrValidCount == 0) {
+                        Serial.print("[HR] FIRST VALID READING at ");
+                        Serial.print(now / 1000);
+                        Serial.print("s: HR=");
+                        Serial.print(rawHR);
+                        Serial.print(" SpO2=");
+                        Serial.println(rawSPO2);
+                    }
+                    hrValidCount++;
+                }
+
+                // Periodic health check every 20 reads (~80 seconds)
+                if (hrReadCount > 0 && hrReadCount % 20 == 0) {
+                    Serial.print("[HR] Health: ");
+                    Serial.print(hrReadCount);
+                    Serial.print(" reads, ");
+                    Serial.print(hrValidCount);
+                    Serial.print(" valid, wireStatus=");
+                    Serial.println(wireStatus);
+                }
+
+                if (xSemaphoreTake(gStateMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                    gState.heart_rate = hr;
+                    gState.spo2 = spo2;
+                    gState.timestamp = millis();
+                    xSemaphoreGive(gStateMutex);
+                }
             }
         }
 
-        // --- MPU-9250: motion magnitude (always read) ---
+        // --- MPU-9250: motion magnitude (always read at 20 Hz) ---
         float motion = 0.0f;
         if (mpu.update()) {
             float ax = mpu.getAccX();
@@ -495,10 +647,7 @@ void sensorTask(void* pvParameters) {
 
         if (xSemaphoreTake(gStateMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
             gState.motion_magnitude = motion;
-            // Update timestamp if HR interrupt didn't fire this cycle
-            if (!stateUpdated) {
-                gState.timestamp = millis();
-            }
+            gState.timestamp = millis();
             xSemaphoreGive(gStateMutex);
         }
 
@@ -612,6 +761,14 @@ void inferenceTask(void* pvParameters) {
             xSemaphoreGive(gStateMutex);
         }
 
+        // Skip inference when sensor not attached (HR=0 means no valid reading)
+        if (hr <= 0.0f) {
+            gAnomalyDetected.store(false);
+            // Skip adaptive threshold update when no valid data
+            vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(2000));
+            continue;
+        }
+
         // Normalize inputs: z-score
         input[0] = (hr  - NORM_MEAN[0]) / NORM_STD[0];
         input[1] = (emg - NORM_MEAN[1]) / NORM_STD[1];
@@ -649,7 +806,7 @@ void inferenceTask(void* pvParameters) {
             // Recompute adaptive threshold every ADAPTIVE_UPDATE_INTERVAL_S seconds
             unsigned long now = millis();
             if (now - gLastThresholdUpdate > (unsigned long)ADAPTIVE_UPDATE_INTERVAL_S * 1000UL
-                && gMseBufferFull) {
+                && gMseBufferFull && hr > 0.0f) {
 
                 float sum = 0.0f, sumSq = 0.0f;
                 for (int i = 0; i < ADAPTIVE_WINDOW_SIZE; i++) {
@@ -660,6 +817,13 @@ void inferenceTask(void* pvParameters) {
                 float variance = sumSq / ADAPTIVE_WINDOW_SIZE - mean * mean;
                 float std = sqrtf(fmaxf(variance, 0.0f));
                 gAdaptiveThreshold = mean + 3.0f * std;
+
+                // Cap threshold to prevent runaway (e.g., from no-finger condition before fix)
+                const float MAX_THRESHOLD = INITIAL_THRESHOLD * 100.0f;  // ~0.308
+                if (gAdaptiveThreshold > MAX_THRESHOLD) {
+                    gAdaptiveThreshold = MAX_THRESHOLD;
+                }
+
                 gLastThresholdUpdate = now;
 
                 // Persist to NVS
@@ -758,8 +922,7 @@ void serialTask(void* pvParameters) {
         Serial.print(",");
         Serial.println(alert ? 1 : 0);
 
-        // BLE telemetry notifications (Phase 5)
-        // Payload: 4 floats (HR, SpO2, EMG, Motion) = 16 bytes
+        // BLE telemetry notifications
         if (deviceConnected.load()) {
             uint8_t telemetry[16];
             memcpy(telemetry,      &hr,   4);
@@ -769,7 +932,11 @@ void serialTask(void* pvParameters) {
             pTelemetryChar->setValue(telemetry, 16);
             pTelemetryChar->notify();
 
-            // Alert: 1 byte — 0x01 if anomaly active, 0x00 otherwise
+            static int notifyCount = 0;
+            if (++notifyCount % 10 == 0) {
+                Serial.printf("[BLE] Notifications sent: %d\n", notifyCount);
+            }
+
             uint8_t alertByte = alert ? 1 : 0;
             pAlertChar->setValue(&alertByte, 1);
             pAlertChar->notify();

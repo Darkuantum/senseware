@@ -12,7 +12,7 @@ compile:
 	$(CLI) compile --fqbn $(FQBN) $(PART_FLAGS) $(SKETCH)
 
 upload: compile
-	$(CLI) upload -p $(PORT) --fqbn $(FQBN) $(PART_FLAGS) $(SKETCH)
+	$(CLI) upload -p $(PORT) --fqbn $(FQBN) $(SKETCH)
 
 monitor:
 	$(CLI) monitor -p $(PORT) -c 115200
