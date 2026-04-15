@@ -12,6 +12,9 @@
 #include "tensorflow/lite/micro/micro_interpreter.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+
 // ================= PIN DEFINITIONS =================
 #define EMG_PIN       34
 #define VIB_PIN       25
@@ -48,7 +51,9 @@ alignas(16) uint8_t gTensorArena[TENSOR_ARENA_SIZE];
 bool gModelReady = false;
 
 // ================= SENSOR STATE =================
-float emgEnvelope = 0.0f;
+volatile int emgRawADC = 0;       // Raw analogRead value (0-4095)
+volatile int emgFiltered = 0;     // Output from emgFilter.update()
+volatile float emgEnvelope = 0.0f;
 float motionMagnitude = 0.0f;
 float heartRateForModel = 71.6044f;
 float displayedHeartRate = 0.0f;
@@ -60,6 +65,7 @@ float accuracyPercent = 0.0f;
 const float EMG_EMA_ALPHA = 0.01f;
 const float EMG_TRIGGER_THRESHOLD = 200.0f;  // debug-only (ADC² units)
 int emgTriggerCounter = 0;
+int emgCalibrationThreshold = 0;  // Max rest noise (ADC²), computed during calibration
 
 // ================= HAPTIC =================
 const int HAPTIC_DUTY = 110;
@@ -145,8 +151,45 @@ void updateHeartSensor() {
 void updateEMG() {
   int raw = analogRead(EMG_PIN);
   int filtered = emgFilter.update(raw);
-  float sqVal = (float)(filtered * filtered);
+  emgRawADC = raw;
+  emgFiltered = filtered;
+  int sqVal = filtered * filtered;
+  if (sqVal <= emgCalibrationThreshold) sqVal = 0;  // Clamp baseline noise
   emgEnvelope = EMG_EMA_ALPHA * sqVal + (1.0f - EMG_EMA_ALPHA) * emgEnvelope;
+}
+
+// ================= EMG TASK (Core 0) — Exactly 1000 Hz =================
+void emgTask(void* pvParameters) {
+  // Init filter and warm up IIR states
+  emgFilter.init(SAMPLE_FREQ_1000HZ, NOTCH_FREQ_50HZ, true, true, true);
+  Serial.println("[EMG] Warming up filter...");
+  for (int i = 0; i < 2000; i++) {
+    emgFilter.update(analogRead(EMG_PIN));
+    vTaskDelay(1);
+  }
+  emgEnvelope = 0.0f;
+  Serial.println("[EMG] Warm-up complete, sampling at 1000Hz.");
+
+  // Calibrate baseline noise threshold (keep muscle relaxed)
+  Serial.println("[EMG] Calibrating baseline... keep muscle relaxed");
+  int maxEnvelope = 0;
+  for (int i = 0; i < 3000; i++) {
+    int raw = analogRead(EMG_PIN);
+    int filtered = emgFilter.update(raw);
+    int sqVal = filtered * filtered;
+    if (sqVal > maxEnvelope) maxEnvelope = sqVal;
+    vTaskDelay(1);
+  }
+  emgCalibrationThreshold = maxEnvelope;
+  emgEnvelope = 0.0f;
+  Serial.print("[EMG] Calibration complete. Threshold (ADC²): ");
+  Serial.println(emgCalibrationThreshold);
+
+  TickType_t xLastWakeTime = xTaskGetTickCount();
+  for (;;) {
+    updateEMG();
+    vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(1));  // Exactly 1ms period
+  }
 }
 
 void updateMPU() {
@@ -379,15 +422,7 @@ void setup() {
   ledcAttach(VIB_PIN, 5000, 8);
   ledcWrite(VIB_PIN, 0);
 
-  // EMG filter init + warm-up (settles IIR filter states)
-  emgFilter.init(SAMPLE_FREQ_1000HZ, NOTCH_FREQ_50HZ, true, true, true);
-  Serial.println("Warming up EMG filter...");
-  for (int i = 0; i < 2000; i++) {
-    emgFilter.update(analogRead(EMG_PIN));
-    delay(1);
-  }
-  emgEnvelope = 0.0f;
-  Serial.println("EMG warm-up complete.");
+  xTaskCreatePinnedToCore(emgTask, "emg", 4096, NULL, 2, NULL, 0);
 
   initModel();
 
@@ -406,7 +441,6 @@ void setup() {
 
 void loop() {
   updateHeartSensor();
-  updateEMG();
   updateMPU();
   updateVibration();
 
@@ -500,8 +534,14 @@ void loop() {
 
   Serial.print("HR_used=");
   Serial.print(heartRateForModel, 2);
+  Serial.print(" RAW=");
+  Serial.print(emgRawADC);
+  Serial.print(" FLT=");
+  Serial.print(emgFiltered);
   Serial.print(" EMG=");
-  Serial.print(emgEnvelope, 4);
+  Serial.print(emgEnvelope, 0);
+  Serial.print(" THR=");
+  Serial.print(emgCalibrationThreshold);
   Serial.print(" ACC=");
   Serial.print(accuracyPercent, 1);
   Serial.print(" MOT=");

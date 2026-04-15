@@ -172,6 +172,7 @@ std::atomic<bool> oldDeviceConnected{false};
 // =====================================================================
 float gEmgEMA = 0.0f;  // Exponential moving average of EMG envelope
 const float EMG_EMA_ALPHA = 0.01f;  // Smooth over ~100 samples at 1000Hz (~100ms)
+static int sEmgCalThreshold = 0;  // Max rest noise (ADC²), set during calibration
 
 // =====================================================================
 // HAPTIC STATE (non-blocking, audit F-C1)
@@ -490,6 +491,21 @@ void emgTask(void* pvParameters) {
     gEmgEMA = 0.0f;  // Reset EMA after warm-up
     Serial.println("[EMG] Filter warm-up complete (2000 samples)");
 
+    // Calibrate baseline noise: sample at rest for ~3 seconds, record max squared
+    Serial.println("[EMG] Calibrating baseline... keep muscle relaxed");
+    int maxEnv = 0;
+    for (int i = 0; i < 3000; i++) {
+        int raw = analogRead(EMG_PIN);
+        int filtered = emgFilter.update(raw);
+        int sqVal = filtered * filtered;
+        if (sqVal > maxEnv) maxEnv = sqVal;
+        vTaskDelay(1);
+    }
+    sEmgCalThreshold = maxEnv;
+    gEmgEMA = 0.0f;
+    Serial.print("[EMG] Calibration complete. Threshold (ADC²): ");
+    Serial.println(sEmgCalThreshold);
+
     TickType_t xLastWakeTime = xTaskGetTickCount();
 
     for (;;) {
@@ -498,10 +514,12 @@ void emgTask(void* pvParameters) {
         int filtered = emgFilter.update(raw);
 
         // Rectified squared envelope (ADC² — per OYMotion EMGFilters convention)
-        float envelope = (float)(filtered * filtered);
+        // Clamp to zero if below calibration threshold (baseline noise floor)
+        int envelope = filtered * filtered;
+        if (envelope <= sEmgCalThreshold) envelope = 0;
 
         // EMA smoothing — reduces noise while preserving signal dynamics
-        gEmgEMA = EMG_EMA_ALPHA * envelope + (1.0f - EMG_EMA_ALPHA) * gEmgEMA;
+        gEmgEMA = EMG_EMA_ALPHA * (float)envelope + (1.0f - EMG_EMA_ALPHA) * gEmgEMA;
 
         // Write to shared state under mutex
         // F-C2: Do NOT write gState.timestamp — only sensorTask is authoritative
@@ -888,7 +906,7 @@ void serialTask(void* pvParameters) {
     TickType_t xLastWakeTime = xTaskGetTickCount();
 
     // Print CSV header once
-    Serial.println("millis,heart_rate,spo2,emg_envelope,motion_magnitude,alert");
+    Serial.println("millis,heart_rate,spo2,emg_envelope,motion_magnitude,alert,emg_cal_threshold");
 
     for (;;) {
         float hr   = 0.0f;
@@ -922,6 +940,9 @@ void serialTask(void* pvParameters) {
         Serial.print(mot, 2);
         Serial.print(",");
         Serial.println(alert ? 1 : 0);
+        // EMG calibration threshold (for monitoring)
+        Serial.print("[EMG_THR] ");
+        Serial.println(sEmgCalThreshold);
 
         // BLE telemetry notifications
         if (deviceConnected.load()) {
