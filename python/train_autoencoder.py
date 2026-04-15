@@ -174,9 +174,10 @@ def inject_anomalies(
         # Add Gaussian noise
         corrupted[idx] += rng.normal(0, 5.0, size=data.shape[1])
 
-    # Clip to reasonable sensor ranges (raw space)
+    # Clip to reasonable sensor ranges (raw space).
+    # emg_envelope is in ADC² units: resting ~5-50, stress can reach ~200-500.
     corrupted[:, 0] = np.clip(corrupted[:, 0], 40, 250)  # heart_rate
-    corrupted[:, 1] = np.clip(corrupted[:, 1], 0.0, 10.0)  # emg_envelope
+    corrupted[:, 1] = np.clip(corrupted[:, 1], 0.0, 500.0)  # emg_envelope (ADC²)
     corrupted[:, 2] = np.clip(corrupted[:, 2], 0.0, 20.0)  # motion_magnitude
 
     return corrupted

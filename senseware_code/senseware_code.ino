@@ -95,16 +95,17 @@
 #define ADAPTIVE_WINDOW_SIZE       200
 #define ADAPTIVE_UPDATE_INTERVAL_S 30    // seconds between recalculations
 
-// Trained on synthetic data (2000 samples, 2026-04-09)
+// Trained on synthetic data (2000 samples, 2026-04-15 — ADC² corrected)
 // Source: python/train_autoencoder.py --data data/raw/synthetic_baseline.csv
 // Model params: 395, TFLite size: 4.1KB
-#define INITIAL_THRESHOLD  0.00308f
+#define INITIAL_THRESHOLD  0.001520f
 #define NUM_FEATURES       3
 #define NUM_OUTPUTS        3
 
 // Normalization constants from models/normalization.json
-const float NORM_MEAN[NUM_FEATURES] = {71.803f, 0.304f, 1.004f};
-const float NORM_STD[NUM_FEATURES]  = {5.023f, 0.101f, 0.153f};
+// emg_envelope is in ADC² units (OYMotion EMGFilters convention)
+const float NORM_MEAN[NUM_FEATURES] = {71.6044f, 23.9010f, 0.9839f};
+const float NORM_STD[NUM_FEATURES]  = {4.7835f,  15.1257f, 0.1589f};
 
 // =====================================================================
 // GLOBAL OBJECTS
@@ -496,7 +497,7 @@ void emgTask(void* pvParameters) {
         int raw = analogRead(EMG_PIN);
         int filtered = emgFilter.update(raw);
 
-        // Rectified squared envelope
+        // Rectified squared envelope (ADC² — per OYMotion EMGFilters convention)
         float envelope = (float)(filtered * filtered);
 
         // EMA smoothing — reduces noise while preserving signal dynamics

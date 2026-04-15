@@ -27,6 +27,15 @@ def generate_baseline(n: int, seed: int = 42) -> pd.DataFrame:
 
     Columns match the serial output format from capture_baseline.py:
         millis, heart_rate, emg_envelope, motion_magnitude
+
+    emg_envelope values are in ADC² units — matching the OYMotion EMGFilters
+    convention where envelope = sq(filtered_ADC_value).
+
+    At rest with a properly connected sensor:
+      - Bandpass filter removes DC (~2048), passes only 20-150Hz AC
+      - Resting filtered output: ~0-10 ADC counts (residual noise)
+      - Squared: ~0-100 ADC²
+      - After EMA smoothing (alpha=0.01): ~5-50 ADC²
     """
     rng = np.random.default_rng(seed)
 
@@ -34,13 +43,15 @@ def generate_baseline(n: int, seed: int = 42) -> pd.DataFrame:
     millis = np.arange(n, dtype=np.float64) * 1000.0
 
     heart_rate = rng.normal(loc=72.0, scale=5.0, size=n)
-    emg_envelope = rng.normal(loc=0.3, scale=0.1, size=n)
+    # EMG at rest: bandpass-filtered ADC output squared, then EMA smoothed.
+    # Realistic resting range: 5-50 ADC² (small residual noise after DC removal)
+    emg_envelope = rng.normal(loc=25.0, scale=15.0, size=n)
     motion_magnitude = rng.normal(loc=1.0, scale=0.15, size=n)
 
     # Add temporal autocorrelation using an AR(1) process
     for col_name, col_arr, col_mean, col_std in [
         ("heart_rate", heart_rate, 72.0, 5.0),
-        ("emg_envelope", emg_envelope, 0.3, 0.1),
+        ("emg_envelope", emg_envelope, 25.0, 15.0),
         ("motion_magnitude", motion_magnitude, 1.0, 0.15),
     ]:
         alpha = 0.95  # autocorrelation coefficient
@@ -54,7 +65,8 @@ def generate_baseline(n: int, seed: int = 42) -> pd.DataFrame:
 
     # Clip to physically plausible ranges
     heart_rate = np.clip(heart_rate, 40, 120)
-    emg_envelope = np.clip(emg_envelope, 0.0, 3.0)
+    # At rest, EMG ADC² should not be negative and rarely exceeds ~100
+    emg_envelope = np.clip(emg_envelope, 0.0, 200.0)
     motion_magnitude = np.clip(motion_magnitude, 0.0, 5.0)
 
     return pd.DataFrame(
