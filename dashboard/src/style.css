@@ -1,26 +1,65 @@
-/* Senseware — Caregiver Monitor
- * Dark theme design system
+/*
+ * DESIGN TOOLS (free) for future enhancements:
+ * 
+ * Icons: Lucide Icons (lucide.dev) — MIT, clean, consistent
+ * Illustrations: unDraw (undraw.co) — free customizable SVG illustrations
+ * Photos: Unsplash (unsplash.com), Pexels (pexels.com) — free stock photos
+ * Gradients: uiGradients (uigradients.com) — CSS gradient inspiration
+ * Patterns: Hero Patterns (heropatterns.com) — subtle SVG patterns
+ * Animations: Animista (animista.net) — CSS animation playground
+ * Fonts: Google Fonts — Inter, Plus Jakarta Sans, Outfit
+ * Color: Coolors (coolors.co), Realtime Colors (realtimecolors.com)
+ * Mockups: Shots (shots.so) — device mockups for screenshots
+ */
+
+/* Senseware — Warm, Human Design System
+ * Calming palette for ASD caregivers and individuals
  */
 
 :root {
-  /* Backgrounds */
-  --bg-primary: #0f172a;
-  --bg-secondary: #1e293b;
-  --card-bg: #1e293b;
-  --card-bg-hover: #263348;
+  /* Backgrounds — warm dark */
+  --bg-primary: #1a1614;
+  --bg-secondary: #252019;
+  --bg-tertiary: #2d261f;
+  --card-bg: #2a231c;
+  --card-bg-hover: #332b22;
 
-  /* Borders */
-  --border: #334155;
-  --border-hover: #475569;
+  /* Text — warm whites */
+  --text-primary: #f5f0eb;
+  --text-secondary: #b8a99a;
+  --text-muted: #8a7b6b;
 
-  /* Text */
-  --text-primary: #f1f5f9;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
+  /* Accents — warm */
+  --accent: #e8913a;        /* Warm amber/orange — primary CTA */
+  --accent-hover: #d47e2d;
+  --accent-glow: rgba(232, 145, 58, 0.15);
 
-  /* Accent */
-  --accent: #6366f1;
-  --accent-hover: #4f46e5;
+  /* Semantic — warm versions */
+  --color-danger: #e85d4a;  /* Warm red */
+  --color-warning: #e8b13a; /* Warm yellow */
+  --color-success: #5ab88f; /* Sage green — calming */
+  --color-info: #5a9ec7;    /* Soft teal */
+  --color-purple: #b08adb;  /* Gentle lavender */
+
+  /* Border */
+  --border: #3d342a;
+  --border-hover: #5a4d40;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+  --shadow-lg: 0 8px 24px rgba(0,0,0,0.5);
+
+  /* Radius */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+
+  /* Transitions */
+  --transition-fast: 150ms ease;
+  --transition-normal: 250ms ease;
+  --transition-slow: 400ms ease;
 
   /* Typography */
   --mono: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', ui-monospace, monospace;
@@ -38,6 +77,7 @@
 
 html {
   font-size: 16px;
+  scroll-behavior: smooth;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -46,7 +86,7 @@ body {
   font-family: var(--sans);
   background: var(--bg-primary);
   color: var(--text-primary);
-  line-height: 1.5;
+  line-height: 1.6;
   min-height: 100vh;
 }
 
@@ -73,4 +113,21 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--border-hover);
+}
+
+/* Selection */
+::selection {
+  background: var(--accent-glow);
+  color: var(--text-primary);
+}
+
+/* Links */
+a {
+  color: var(--accent);
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+a:hover {
+  color: var(--accent-hover);
 }

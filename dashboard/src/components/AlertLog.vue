@@ -19,7 +19,7 @@
 
     <div ref="logContainer" class="alert-list">
       <div v-if="alerts.length === 0" class="alert-empty">
-        <span class="empty-icon">&#x2705;</span>
+        <ShieldCheck :size="28" class="empty-icon" />
         <p>No alerts recorded</p>
         <p class="hint">Alerts will appear here when stress anomalies are detected</p>
       </div>
@@ -30,9 +30,13 @@
           :key="alert.id"
           class="alert-entry"
         >
-          <span class="alert-time">{{ alert.time }}</span>
+          <span class="alert-time">
+            <Clock :size="12" class="time-icon" />
+            {{ alert.time }}
+          </span>
           <span class="alert-message">
-            &#x26A0;&#xFE0F; Stress detected
+            <AlertTriangle :size="14" class="alert-icon-inline" />
+            Stress detected
           </span>
           <span class="alert-details">
             HR: {{ alert.heartRate.toFixed(0) }} BPM &middot;
@@ -47,6 +51,7 @@
 
 <script setup>
 import { ref, nextTick, onMounted, onUnmounted } from 'vue'
+import { AlertTriangle, Clock, ShieldCheck } from 'lucide-vue-next'
 import { useBluetooth } from '../composables/useBluetooth.js'
 
 const ble = useBluetooth()
@@ -100,7 +105,7 @@ function clearAlerts() {
 .alert-log {
   background: var(--card-bg);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   padding: 1rem 1.25rem;
   display: flex;
   flex-direction: column;
@@ -133,8 +138,8 @@ function clearAlerts() {
   height: 22px;
   padding: 0 6px;
   border-radius: 11px;
-  background: rgba(239, 68, 68, 0.2);
-  color: #ef4444;
+  background: rgba(232, 93, 74, 0.2);
+  color: var(--color-danger);
   font-size: 0.72rem;
   font-weight: 700;
 }
@@ -147,7 +152,7 @@ function clearAlerts() {
   color: var(--text-secondary);
   font-size: 0.78rem;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--transition-fast);
 }
 
 .btn-clear:hover {
@@ -185,8 +190,9 @@ function clearAlerts() {
 }
 
 .empty-icon {
-  font-size: 1.5rem;
+  color: var(--color-success);
   margin-bottom: 0.5rem;
+  opacity: 0.6;
 }
 
 .alert-empty p {
@@ -202,28 +208,43 @@ function clearAlerts() {
 .alert-entry {
   padding: 0.6rem 0.75rem;
   margin-bottom: 0.4rem;
-  border-radius: 8px;
-  background: rgba(239, 68, 68, 0.06);
-  border-left: 3px solid #ef4444;
+  border-radius: var(--radius-sm);
+  background: rgba(232, 93, 74, 0.05);
+  border-left: 3px solid var(--color-danger);
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
 }
 
 .alert-time {
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-family: var(--mono);
   color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.time-icon {
+  opacity: 0.6;
 }
 
 .alert-message {
   font-size: 0.85rem;
   font-weight: 600;
-  color: #fca5a5;
+  color: #f0a09a;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.alert-icon-inline {
+  color: var(--color-warning);
+  flex-shrink: 0;
 }
 
 .alert-details {
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-family: var(--mono);
   color: var(--text-secondary);
 }

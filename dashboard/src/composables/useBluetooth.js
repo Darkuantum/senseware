@@ -179,15 +179,14 @@ class BluetoothManager {
         this.alertChar.removeEventListener('characteristicvaluechanged', this._boundHandleAlert)
         try { await this.alertChar.stopNotifications() } catch { /* may already be stopped */ }
       }
-      this.device.gatt.disconnect()
-    } catch (err) {
-      console.error('[BLE] Disconnect error:', err)
-    } finally {
       this.telemetryChar = null
       this.alertChar = null
       this.server = null
+      this.device.gatt.disconnect()
+      // Do NOT set DISCONNECTED here — the gattserverdisconnected handler does it
+    } catch (err) {
+      console.error('[BLE] Disconnect error:', err)
       this.setState(STATE.DISCONNECTED)
-      this.emit('disconnected')
     }
   }
 

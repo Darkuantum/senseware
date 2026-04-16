@@ -20,6 +20,8 @@
  *   - Adaptive threshold with NVS persistence (Preferences)
  *   - Non-blocking haptic with cooldown
  *   - All audit fixes applied (atomic flags, stack sizes, alignment, etc.)
+ *   - Merged demo behavior: windowed anomaly detection, double-pulse haptic,
+ *     alert blink, dino animation, accuracy %, HR placeholder when no finger
  */
 
 // =====================================================================
@@ -61,6 +63,26 @@
 #define I2C_SCL       22
 
 // =====================================================================
+// I2C BUS RECOVERY
+// =====================================================================
+// Unsticks a hung SH1106 by cycling the I2C peripheral and toggling SCL
+static void recoverI2C() {
+    Wire.end();
+    Wire.begin(I2C_SDA, I2C_SCL);
+    Wire.setClock(400000);
+    // Toggle SCL a few times manually to clear stuck slaves
+    pinMode(I2C_SCL, OUTPUT);
+    for (int i = 0; i < 9; i++) {
+        digitalWrite(I2C_SCL, HIGH);
+        delayMicroseconds(5);
+        digitalWrite(I2C_SCL, LOW);
+        delayMicroseconds(5);
+    }
+    Wire.begin(I2C_SDA, I2C_SCL);
+    Wire.setClock(400000);
+}
+
+// =====================================================================
 // DISPLAY SETTINGS
 // =====================================================================
 #define I2C_ADDR_DISPLAY  0x3C
@@ -83,11 +105,25 @@
 #define INFERENCE_TASK_STACK 4096
 
 // =====================================================================
-// HAPTIC CONFIGURATION (non-blocking, audit F-C1/F-W8)
+// HAPTIC CONFIGURATION — double-pulse pattern (merged from demo)
 // =====================================================================
-#define HAPTIC_DURATION_MS    500
-#define HAPTIC_COOLDOWN_MS    5000
-#define HAPTIC_PWM_DUTY       180
+#define HAPTIC_DUTY         110
+#define HAPTIC_PULSE_MS     220
+#define HAPTIC_GAP_MS       180
+#define HAPTIC_COOLDOWN_MS  15000  // Matches anomaly cooldown
+
+// =====================================================================
+// ANOMALY DETECTION — confirmation count + windowing (from demo)
+// =====================================================================
+#define ANOMALY_CONFIRM_COUNT  3
+#define ANOMALY_WINDOW_MS      5000
+#define ANOMALY_COOLDOWN_MS    15000
+
+// =====================================================================
+// ALERT BLINK CONFIGURATION (from demo)
+// =====================================================================
+#define ALERT_BLINK_INTERVAL_MS  200
+#define ALERT_BLINK_TOGGLES      6   // 3 blinks
 
 // =====================================================================
 // ADAPTIVE THRESHOLD CONFIGURATION
@@ -95,17 +131,18 @@
 #define ADAPTIVE_WINDOW_SIZE       200
 #define ADAPTIVE_UPDATE_INTERVAL_S 30    // seconds between recalculations
 
-// Trained on synthetic data (2000 samples, 2026-04-15 — ADC² corrected)
-// Source: python/train_autoencoder.py --data data/raw/synthetic_baseline.csv
+// Trained on real baseline data (2026-04-16)
+// Source: python/train_autoencoder.py --data data/raw/
 // Model params: 395, TFLite size: 4.1KB
-#define INITIAL_THRESHOLD  0.001520f
+#define INITIAL_THRESHOLD  0.092563f
 #define NUM_FEATURES       3
 #define NUM_OUTPUTS        3
 
 // Normalization constants from models/normalization.json
-// emg_envelope is in ADC² units (OYMotion EMGFilters convention)
-const float NORM_MEAN[NUM_FEATURES] = {71.6044f, 23.9010f, 0.9839f};
-const float NORM_STD[NUM_FEATURES]  = {4.7835f,  15.1257f, 0.1589f};
+// Mean: HR=71.6000, EMG=6.6239, MOT=1.0190
+// Std:  HR=1.0000,  EMG=146.1824, MOT=0.0391
+const float NORM_MEAN[NUM_FEATURES] = {71.6000f, 6.6239f, 1.0190f};
+const float NORM_STD[NUM_FEATURES]  = {1.0000f,  146.1824f, 0.0391f};
 
 // =====================================================================
 // GLOBAL OBJECTS
@@ -130,6 +167,7 @@ struct PhysioState {
 
 PhysioState gState;
 SemaphoreHandle_t gStateMutex;
+SemaphoreHandle_t gSerialMutex;  // Protects serial output from interleaving across tasks
 
 // =====================================================================
 // EDGE AI / TFLITE CONFIGURATION
@@ -175,11 +213,42 @@ const float EMG_EMA_ALPHA = 0.01f;  // Smooth over ~100 samples at 1000Hz (~100m
 static int sEmgCalThreshold = 0;  // Max rest noise (ADC²), set during calibration
 
 // =====================================================================
-// HAPTIC STATE (non-blocking, audit F-C1)
+// EMG DIAGNOSTIC GLOBALS (written from emgTask, read by serial/inference)
 // =====================================================================
-unsigned long gHapticStart = 0;
-bool gHapticActive = false;
-unsigned long gLastHapticTime = 0;
+volatile int gEmgRawADC = 0;       // Raw analogRead value (0-4095)
+volatile int gEmgFiltered = 0;     // Output from emgFilter.update()
+
+// =====================================================================
+// ACCURACY PERCENTAGE + LAST MSE (from demo)
+// =====================================================================
+float gAccuracyPercent = 0.0f;
+float gLastMse = 0.0f;            // Written by inferenceTask, read by displayTask
+
+// =====================================================================
+// ANOMALY WINDOW STATE (from demo — confirmation count + 5s window + 15s cooldown)
+// =====================================================================
+int gAnomalyCounter = 0;
+bool gWindowActive = false;
+unsigned long gWindowStartMs = 0;
+int gAnomalyEventCount = 0;
+bool gPrevImuAnomaly = false;
+unsigned long gContinuousAnomalyStartMs = 0;
+bool gCooldownActive = false;
+unsigned long gCooldownStartMs = 0;
+
+// =====================================================================
+// HAPTIC STATE — double-pulse pattern (from demo)
+// =====================================================================
+bool gVibrationSequenceActive = false;
+bool gVibrationMotorOn = false;
+unsigned long gVibrationStepStart = 0;
+int gVibrationPulsesRemaining = 0;
+
+// =====================================================================
+// ALERT BLINK STATE (from demo)
+// =====================================================================
+bool gAlertBlinkActive = false;
+unsigned long gAlertBlinkStart = 0;
 
 // =====================================================================
 // BLE CONFIGURATION (Phase 5)
@@ -199,7 +268,10 @@ class ServerCallbacks : public BLEServerCallbacks {
     }
     void onDisconnect(BLEServer* pServer) override {
         deviceConnected.store(false);
-        Serial.println("[BLE] Device disconnected");
+        if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            Serial.println("[BLE] Device disconnected");
+            xSemaphoreGive(gSerialMutex);
+        }
     }
 };
 
@@ -208,9 +280,15 @@ class ServerCallbacks : public BLEServerCallbacks {
 class TelemetryCharCallbacks : public BLECharacteristicCallbacks {
     void onStatus(BLECharacteristic *pChar, Status s, uint32_t code) override {
         if (s == ERROR_GATT) {
-            Serial.printf("[BLE] Telemetry notify FAILED: 0x%04x\n", code);
+            if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                Serial.printf("[BLE] Telemetry notify FAILED: 0x%04x\n", code);
+                xSemaphoreGive(gSerialMutex);
+            }
         } else if (s == ERROR_NOTIFY_DISABLED) {
-            Serial.println("[BLE] Telemetry: client disabled notifications");
+            if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                Serial.println("[BLE] Telemetry: client disabled notifications");
+                xSemaphoreGive(gSerialMutex);
+            }
         }
     }
 };
@@ -218,7 +296,10 @@ class TelemetryCharCallbacks : public BLECharacteristicCallbacks {
 class AlertCharCallbacks : public BLECharacteristicCallbacks {
     void onStatus(BLECharacteristic *pChar, Status s, uint32_t code) override {
         if (s == ERROR_GATT) {
-            Serial.printf("[BLE] Alert notify FAILED: 0x%04x\n", code);
+            if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                Serial.printf("[BLE] Alert notify FAILED: 0x%04x\n", code);
+                xSemaphoreGive(gSerialMutex);
+            }
         }
     }
 };
@@ -231,6 +312,14 @@ void sensorTask(void* pvParameters);
 void displayTask(void* pvParameters);
 void serialTask(void* pvParameters);
 void inferenceTask(void* pvParameters);
+
+// Demo-merged functions
+void startDoubleVibration();
+void updateVibration();
+bool shouldShowAlertText();
+void drawDinoFrame(int x, int y, int frame);
+void drawCooldownDinoScreen();
+float computeAccuracyPercent(float mse);
 
 // =====================================================================
 // SETUP
@@ -304,6 +393,13 @@ void setup() {
         while (1) { delay(1000); }
     }
 
+    // --- Serial mutex (prevents interleaved output between tasks) ---
+    gSerialMutex = xSemaphoreCreateMutex();
+    if (gSerialMutex == NULL) {
+        Serial.println("Failed to create serial mutex. Halting.");
+        while (1) { delay(1000); }
+    }
+
     // Initialize state to safe defaults
     gState.heart_rate       = 0.0f;
     gState.spo2             = 0.0f;
@@ -322,17 +418,14 @@ void setup() {
         Serial.println(gAdaptiveThreshold, 6);
     } else {
         if (stored > 0) {
-            Serial.print("[NVS] Stored threshold invalid (");
-            Serial.print(stored, 6);
-            Serial.println("), resetting");
+            Serial.println("[NVS] Threshold reset (was invalid)");
             Preferences prefsRW;
             prefsRW.begin("senseware", false);
             prefsRW.putFloat("threshold", INITIAL_THRESHOLD);
             prefsRW.end();
         }
         gAdaptiveThreshold = INITIAL_THRESHOLD;
-        Serial.print("[NVS] Using initial threshold: ");
-        Serial.println(INITIAL_THRESHOLD, 6);
+        Serial.printf("[NVS] Threshold: %.6f (initial)\n", INITIAL_THRESHOLD);
     }
 
     // --- TFLite Model Init ---
@@ -435,34 +528,163 @@ void setup() {
         BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_READ
     );
     pTelemetryChar->setCallbacks(new TelemetryCharCallbacks());
-    pTelemetryChar->addDescriptor(new BLE2902());
+    {
+        BLE2902* pDesc2902 = new BLE2902();
+        pDesc2902->setNotifications(true);
+        pTelemetryChar->addDescriptor(pDesc2902);
+    }
 
     pAlertChar = pService->createCharacteristic(
         ALERT_CHAR_UUID,
         BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_READ
     );
     pAlertChar->setCallbacks(new AlertCharCallbacks());
-    pAlertChar->addDescriptor(new BLE2902());
+    {
+        BLE2902* pDesc2902 = new BLE2902();
+        pDesc2902->setNotifications(true);
+        pAlertChar->addDescriptor(pDesc2902);
+    }
 
     pService->start();
     pServer->getAdvertising()->start();
     Serial.println("BLE server started. Device: Senseware");
 
+    // --- Ensure clean startup state (from demo) ---
+    gVibrationSequenceActive = false;
+    gVibrationMotorOn = false;
+    gAlertBlinkActive = false;
+    gCooldownActive = false;
+    gWindowActive = false;
+    gAnomalyEventCount = 0;
+    gPrevImuAnomaly = false;
+    gContinuousAnomalyStartMs = 0;
+
     Serial.println("=== Senseware Phase 5 Ready ===");
 }
 
 // =====================================================================
-// LOOP — nothing to do, FreeRTOS drives everything
+// LOOP — non-blocking haptic update + yield to RTOS
 // =====================================================================
 void loop() {
-    // Non-blocking haptic timer check (runs every loop iteration)
-    // This ensures the haptic turns off exactly after HAPTIC_DURATION_MS
-    if (gHapticActive && (millis() - gHapticStart >= HAPTIC_DURATION_MS)) {
-        ledcWrite(VIB_PIN, 0);
-        gHapticActive = false;
-    }
+    // Non-blocking double-pulse haptic timer (from demo)
+    updateVibration();
 
     vTaskDelay(pdMS_TO_TICKS(10));  // Yield to RTOS tasks
+}
+
+// =====================================================================
+// DOUBLE-PULSE HAPTIC (from demo)
+// =====================================================================
+void startDoubleVibration() {
+    gVibrationSequenceActive = true;
+    gVibrationMotorOn = true;
+    gVibrationStepStart = millis();
+    gVibrationPulsesRemaining = 2;
+
+    ledcWrite(VIB_PIN, HAPTIC_DUTY * 0.8); // slightly softer start
+
+    gAlertBlinkActive = true;
+    gAlertBlinkStart = millis();
+}
+
+void updateVibration() {
+    if (!gVibrationSequenceActive) return;
+
+    unsigned long now = millis();
+
+    if (gVibrationMotorOn) {
+        if (now - gVibrationStepStart >= HAPTIC_PULSE_MS) {
+            ledcWrite(VIB_PIN, 0);
+            gVibrationMotorOn = false;
+            gVibrationStepStart = now;
+            gVibrationPulsesRemaining--;
+
+            if (gVibrationPulsesRemaining <= 0) {
+                gVibrationSequenceActive = false;
+            }
+        }
+    } else {
+        if (gVibrationPulsesRemaining > 0 && now - gVibrationStepStart >= HAPTIC_GAP_MS) {
+            ledcWrite(VIB_PIN, HAPTIC_DUTY);
+            gVibrationMotorOn = true;
+            gVibrationStepStart = now;
+        }
+    }
+}
+
+// =====================================================================
+// ALERT BLINK (from demo)
+// =====================================================================
+bool shouldShowAlertText() {
+    if (!gAlertBlinkActive) return false;
+
+    unsigned long elapsed = millis() - gAlertBlinkStart;
+    unsigned long totalDuration = ALERT_BLINK_INTERVAL_MS * ALERT_BLINK_TOGGLES;
+
+    if (elapsed >= totalDuration) {
+        gAlertBlinkActive = false;
+        return false;
+    }
+
+    unsigned long phase = elapsed / ALERT_BLINK_INTERVAL_MS;
+    return (phase % 2 == 0);
+}
+
+// =====================================================================
+// ACCURACY PERCENTAGE (from demo)
+// =====================================================================
+float computeAccuracyPercent(float mse) {
+    if (mse < 0.0f) return 0.0f;
+    float denom = max(gAdaptiveThreshold, 0.000001f);
+    float acc = 100.0f * expf(-mse / denom);
+    return constrain(acc, 0.0f, 100.0f);
+}
+
+// =====================================================================
+// DINO ANIMATION (from demo — verbatim)
+// =====================================================================
+void drawDinoFrame(int x, int y, int frame) {
+  display.fillRect(x + 10, y + 2, 14, 10, SH110X_WHITE);
+  display.drawPixel(x + 20, y + 5, SH110X_BLACK);
+
+  // smiling mouth
+  display.drawPixel(x + 16, y + 9, SH110X_BLACK);
+  display.drawPixel(x + 17, y + 10, SH110X_BLACK);
+  display.drawPixel(x + 18, y + 10, SH110X_BLACK);
+  display.drawPixel(x + 19, y + 9, SH110X_BLACK);
+
+  display.fillRect(x + 8, y + 12, 18, 14, SH110X_WHITE);
+
+  display.fillRect(x + 3, y + 16, 6, 4, SH110X_WHITE);
+  display.fillRect(x + 0, y + 17, 3, 2, SH110X_WHITE);
+
+  if (frame == 0) {
+    display.fillRect(x + 24, y + 14, 5, 2, SH110X_WHITE);
+    display.fillRect(x + 24, y + 18, 4, 2, SH110X_WHITE);
+    display.fillRect(x + 11, y + 26, 3, 8, SH110X_WHITE);
+    display.fillRect(x + 20, y + 24, 3, 10, SH110X_WHITE);
+  } else {
+    display.fillRect(x + 24, y + 13, 4, 2, SH110X_WHITE);
+    display.fillRect(x + 24, y + 19, 5, 2, SH110X_WHITE);
+    display.fillRect(x + 11, y + 24, 3, 10, SH110X_WHITE);
+    display.fillRect(x + 20, y + 26, 3, 8, SH110X_WHITE);
+  }
+
+  display.fillRect(x + 9, y + 33, 6, 2, SH110X_WHITE);
+  display.fillRect(x + 18, y + 33, 6, 2, SH110X_WHITE);
+}
+
+void drawCooldownDinoScreen() {
+  display.clearDisplay();
+  display.setTextColor(SH110X_WHITE);
+
+  int frame = (millis() / 250) % 2;
+  drawDinoFrame(42, 10, frame);
+
+  display.setTextSize(1);
+  display.setCursor(26, 54);
+  display.print("Cooling down");
+  display.display();
 }
 
 // =====================================================================
@@ -489,10 +711,16 @@ void emgTask(void* pvParameters) {
         vTaskDelay(1);
     }
     gEmgEMA = 0.0f;  // Reset EMA after warm-up
-    Serial.println("[EMG] Filter warm-up complete (2000 samples)");
+    if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        Serial.println("[EMG] Filter warm-up complete (2000 samples)");
+        xSemaphoreGive(gSerialMutex);
+    }
 
     // Calibrate baseline noise: sample at rest for ~3 seconds, record max squared
-    Serial.println("[EMG] Calibrating baseline... keep muscle relaxed");
+    if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        Serial.println("[EMG] Calibrating baseline... keep muscle relaxed");
+        xSemaphoreGive(gSerialMutex);
+    }
     int maxEnv = 0;
     for (int i = 0; i < 3000; i++) {
         int raw = analogRead(EMG_PIN);
@@ -503,8 +731,11 @@ void emgTask(void* pvParameters) {
     }
     sEmgCalThreshold = maxEnv;
     gEmgEMA = 0.0f;
-    Serial.print("[EMG] Calibration complete. Threshold (ADC²): ");
-    Serial.println(sEmgCalThreshold);
+    if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        Serial.print("[EMG] Calibration complete. Threshold (ADC²): ");
+        Serial.println(sEmgCalThreshold);
+        xSemaphoreGive(gSerialMutex);
+    }
 
     TickType_t xLastWakeTime = xTaskGetTickCount();
 
@@ -512,6 +743,10 @@ void emgTask(void* pvParameters) {
         // Read raw ADC and apply EMGFilters bandpass + notch
         int raw = analogRead(EMG_PIN);
         int filtered = emgFilter.update(raw);
+
+        // Diagnostic globals (from demo) — for serial output
+        gEmgRawADC = raw;
+        gEmgFiltered = filtered;
 
         // Rectified squared envelope (ADC² — per OYMotion EMGFilters convention)
         // Clamp to zero if below calibration threshold (baseline noise floor)
@@ -574,9 +809,10 @@ void sensorTask(void* pvParameters) {
             // needs time to accumulate PPG samples before the first valid output.
             // Without this, the first 1-2 reads return all zeros (SPO2=0, HR=0).
             if (now - taskStart < HR_WARMUP_MS && hrReadCount <= 2) {
-                Serial.print("[HR] Skipping read #");
-                Serial.print(hrReadCount);
-                Serial.println(" (sensor warm-up)");
+                if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                    Serial.printf("[HR] Skip #%d (warm-up)\n", hrReadCount);
+                    xSemaphoreGive(gSerialMutex);
+                }
             } else {
                 // Call the library's read method
                 bloodOxygen.getHeartbeatSPO2();
@@ -599,23 +835,14 @@ void sensorTask(void* pvParameters) {
                     }
                 }
 
-                // Log raw data for first 10 reads (diagnostic)
+                // Log simplified status for first 10 reads
                 if (hrReadCount <= 10) {
-                    Serial.print("[HR] Read #");
-                    Serial.print(hrReadCount);
-                    Serial.print(" wireStatus=");
-                    Serial.print(wireStatus);
-                    Serial.print(" bytes=");
-                    Serial.print(bytesRead);
-                    Serial.print(" raw=[");
-                    for (int i = 0; i < 8; i++) {
-                        if (i > 0) Serial.print(" ");
-                        Serial.print(rawBuf[i], HEX);
+                    bool valid = (rawHR > 0 && rawSPO2 > 0);
+                    if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                        Serial.printf("[HR] Read #%d: %s\n", hrReadCount,
+                            valid ? "OK" : "no signal");
+                        xSemaphoreGive(gSerialMutex);
                     }
-                    Serial.print("] libSPO2=");
-                    Serial.print(rawSPO2);
-                    Serial.print(" libHR=");
-                    Serial.println(rawHR);
                 }
 
                 // Library returns -1 when no valid data (finger off / still measuring)
@@ -626,24 +853,25 @@ void sensorTask(void* pvParameters) {
                 // Track first valid reading
                 if (rawHR > 0 && rawSPO2 > 0) {
                     if (hrValidCount == 0) {
-                        Serial.print("[HR] FIRST VALID READING at ");
-                        Serial.print(now / 1000);
-                        Serial.print("s: HR=");
-                        Serial.print(rawHR);
-                        Serial.print(" SpO2=");
-                        Serial.println(rawSPO2);
+                        if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                            Serial.print("[HR] FIRST VALID READING at ");
+                            Serial.print(now / 1000);
+                            Serial.print("s: HR=");
+                            Serial.print(rawHR);
+                            Serial.print(" SpO2=");
+                            Serial.println(rawSPO2);
+                            xSemaphoreGive(gSerialMutex);
+                        }
                     }
                     hrValidCount++;
                 }
 
                 // Periodic health check every 20 reads (~80 seconds)
                 if (hrReadCount > 0 && hrReadCount % 20 == 0) {
-                    Serial.print("[HR] Health: ");
-                    Serial.print(hrReadCount);
-                    Serial.print(" reads, ");
-                    Serial.print(hrValidCount);
-                    Serial.print(" valid, wireStatus=");
-                    Serial.println(wireStatus);
+                    if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                        Serial.printf("[HR] Status: %d/%d valid readings\n", hrValidCount, hrReadCount);
+                        xSemaphoreGive(gSerialMutex);
+                    }
                 }
 
                 if (xSemaphoreTake(gStateMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
@@ -677,13 +905,28 @@ void sensorTask(void* pvParameters) {
 
 // =====================================================================
 // DISPLAY TASK (Core 1) — 2 Hz OLED refresh
+// Priority order: ALERT blink → Cooldown dino → Normal metrics
 // =====================================================================
 void displayTask(void* pvParameters) {
     TickType_t xLastWakeTime = xTaskGetTickCount();
 
     char buf[64];
 
+    // I2C hang watchdog — if we haven't completed a cycle in >2 seconds,
+    // the I2C bus is stuck. Reset it.
+    static unsigned long lastDisplayCycle = millis();
+
     for (;;) {
+        if (millis() - lastDisplayCycle > 2000) {
+            recoverI2C();
+            // Re-init the OLED after bus reset
+            display.begin(0x3C, true);
+            display.clearDisplay();
+            display.display();
+            Serial.println("[OLED] I2C bus recovered after hang");
+        }
+        lastDisplayCycle = millis();
+
         float hr   = 0.0f;
         float spo2 = 0.0f;
         float emg  = 0.0f;
@@ -698,9 +941,39 @@ void displayTask(void* pvParameters) {
             xSemaphoreGive(gStateMutex);
         }
 
-        bool alert = gAnomalyDetected.load();
+        // --- Priority 1: Full-screen ALERT blink (from demo) ---
+        if (shouldShowAlertText()) {
+            display.clearDisplay();
+            display.setTextColor(SH110X_WHITE);
+            display.setTextSize(2);
 
-        // Clear and redraw
+            const char* msg = "ALERT!";
+            int16_t x1, y1;
+            uint16_t w, h;
+            display.getTextBounds(msg, 0, 0, &x1, &y1, &w, &h);
+
+            int x = (128 - w) / 2;
+            int y = (64 - h) / 2;
+
+            display.setCursor(x, y);
+            display.print(msg);
+            display.display();
+            lastDisplayCycle = millis();
+
+            vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(500));
+            continue;
+        }
+
+        // --- Priority 2: Cooldown dino animation (from demo) ---
+        if (gCooldownActive) {
+            drawCooldownDinoScreen();
+            lastDisplayCycle = millis();
+
+            vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(500));
+            continue;
+        }
+
+        // --- Priority 3: Normal metrics ---
         display.clearDisplay();
         display.setTextSize(1);
         display.setTextColor(SH110X_WHITE);
@@ -710,19 +983,24 @@ void displayTask(void* pvParameters) {
         display.println("Senseware P5");
         display.drawLine(0, 10, 128, 10, SH110X_WHITE);
 
-        // Heart rate + SpO2
+        // Heart rate + SpO2 (display raw — shows 0 when no finger)
         display.setCursor(0, 14);
         snprintf(buf, sizeof(buf), "HR: %.0f  SpO2: %.0f%%", hr, spo2);
         display.println(buf);
 
         // EMG envelope
-        display.setCursor(0, 26);
+        display.setCursor(0, 24);
         snprintf(buf, sizeof(buf), "EMG: %.0f", emg);
         display.println(buf);
 
-        // Motion magnitude
-        display.setCursor(0, 38);
-        snprintf(buf, sizeof(buf), "MOT: %.2fg", mot);
+        // Accuracy percentage (from demo)
+        display.setCursor(0, 32);
+        snprintf(buf, sizeof(buf), "ACC: %.1f%%", gAccuracyPercent);
+        display.println(buf);
+
+        // MSE (from demo)
+        display.setCursor(0, 40);
+        snprintf(buf, sizeof(buf), "MSE: %.5f", gLastMse);
         display.println(buf);
 
         // Adaptive threshold
@@ -730,22 +1008,13 @@ void displayTask(void* pvParameters) {
         snprintf(buf, sizeof(buf), "TH: %.5f", gAdaptiveThreshold);
         display.println(buf);
 
-        // Alert status
-        if (alert) {
-            // Flash: invert text on even cycles via millis
-            bool flash = (millis() / 250) % 2 == 0;
-            display.setTextSize(2);
-            display.setTextColor(flash ? SH110X_BLACK : SH110X_WHITE);
-            display.setCursor(0, 56);
-            display.println("! ALERT !");
-            display.setTextColor(SH110X_WHITE);
-        } else {
-            display.setTextSize(1);
-            display.setCursor(0, 56);
-            display.println("STATUS: OK");
-        }
+        // Motion magnitude
+        display.setCursor(0, 56);
+        snprintf(buf, sizeof(buf), "MOT: %.2fg", mot);
+        display.println(buf);
 
         display.display();
+        lastDisplayCycle = millis();
 
         // 2 Hz -> 500 ms period
         vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(500));
@@ -754,7 +1023,7 @@ void displayTask(void* pvParameters) {
 
 // =====================================================================
 // INFERENCE TASK (Core 1) — 0.5 Hz autoencoder anomaly detection
-// With adaptive threshold + non-blocking haptic (audit F-C1)
+// With adaptive threshold + windowed detection + double-pulse haptic
 // =====================================================================
 void inferenceTask(void* pvParameters) {
     TickType_t xLastWakeTime = xTaskGetTickCount();
@@ -762,6 +1031,16 @@ void inferenceTask(void* pvParameters) {
     float input[NUM_FEATURES];
 
     for (;;) {
+        // Cooldown expiration — must run every cycle regardless of model state
+        if (gCooldownActive && millis() - gCooldownStartMs >= ANOMALY_COOLDOWN_MS) {
+            gCooldownActive = false;
+            gWindowActive = false;
+            gAnomalyEventCount = 0;
+            gPrevImuAnomaly = false;
+            gContinuousAnomalyStartMs = 0;
+            gAnomalyDetected.store(false);
+        }
+
         // Skip inference if model not loaded
         if (!gModelReady) {
             vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(2000));
@@ -780,16 +1059,14 @@ void inferenceTask(void* pvParameters) {
             xSemaphoreGive(gStateMutex);
         }
 
-        // Skip inference when sensor not attached (HR=0 means no valid reading)
-        if (hr <= 0.0f) {
-            gAnomalyDetected.store(false);
-            // Skip adaptive threshold update when no valid data
-            vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(2000));
-            continue;
-        }
+        // HR placeholder (from demo): when no finger detected (HR=0),
+        // use NORM_MEAN[0] as placeholder so inference can still run
+        // (EMG + motion detection still useful without HR sensor).
+        // gState.heart_rate keeps 0 for display purposes.
+        float heartRateForModel = (hr > 0.0f) ? hr : NORM_MEAN[0];
 
         // Normalize inputs: z-score
-        input[0] = (hr  - NORM_MEAN[0]) / NORM_STD[0];
+        input[0] = (heartRateForModel - NORM_MEAN[0]) / NORM_STD[0];
         input[1] = (emg - NORM_MEAN[1]) / NORM_STD[1];
         input[2] = (mot - NORM_MEAN[2]) / NORM_STD[2];
 
@@ -804,8 +1081,13 @@ void inferenceTask(void* pvParameters) {
         unsigned long dt = micros() - t0;
 
         if (status != kTfLiteOk) {
-            Serial.print("[ML] Invoke failed: ");
-            Serial.println(status);
+            if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                Serial.print("[ML] Invoke failed: ");
+                Serial.println(status);
+                xSemaphoreGive(gSerialMutex);
+            }
+            gLastMse = -1.0f;
+            gAccuracyPercent = 0.0f;
         } else {
             // Compute MSE: mean((input - output)^2)
             float mse = 0.0f;
@@ -814,6 +1096,9 @@ void inferenceTask(void* pvParameters) {
                 mse += diff * diff;
             }
             mse /= NUM_OUTPUTS;
+
+            gLastMse = mse;
+            gAccuracyPercent = computeAccuracyPercent(mse);
 
             // --- Adaptive threshold: feed MSE into ring buffer ---
             gMseBuffer[gMseBufferIndex] = mse;
@@ -825,7 +1110,7 @@ void inferenceTask(void* pvParameters) {
             // Recompute adaptive threshold every ADAPTIVE_UPDATE_INTERVAL_S seconds
             unsigned long now = millis();
             if (now - gLastThresholdUpdate > (unsigned long)ADAPTIVE_UPDATE_INTERVAL_S * 1000UL
-                && gMseBufferFull && hr > 0.0f) {
+                && gMseBufferFull) {
 
                 float sum = 0.0f, sumSq = 0.0f;
                 for (int i = 0; i < ADAPTIVE_WINDOW_SIZE; i++) {
@@ -835,6 +1120,7 @@ void inferenceTask(void* pvParameters) {
                 float mean = sum / ADAPTIVE_WINDOW_SIZE;
                 float variance = sumSq / ADAPTIVE_WINDOW_SIZE - mean * mean;
                 float std = sqrtf(fmaxf(variance, 0.0f));
+                float oldThreshold = gAdaptiveThreshold;
                 gAdaptiveThreshold = mean + 3.0f * std;
 
                 // Cap threshold to prevent runaway (e.g., from no-finger condition before fix)
@@ -854,43 +1140,104 @@ void inferenceTask(void* pvParameters) {
                 prefs.end();
 
                 // Log after mutex released and prefs closed
-                Serial.print("[ADAPT] Threshold updated: ");
-                Serial.print(gAdaptiveThreshold, 6);
-                Serial.print(" (mean=");
-                Serial.print(mean, 6);
-                Serial.print(", std=");
-                Serial.print(std, 6);
-                Serial.println(")");
+                if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                    Serial.printf("[ADAPT] Threshold: %.6f (was %.6f)\n", gAdaptiveThreshold, oldThreshold);
+                    xSemaphoreGive(gSerialMutex);
+                }
             }
 
-            // --- Anomaly detection + non-blocking haptic ---
-            if (mse > gAdaptiveThreshold) {
-                gAnomalyDetected.store(true);
+            // --- Anomaly detection: windowed multi-stage (from demo) ---
+            bool anomaly = false;
+            bool imuAnomalyNow = false;
 
-                // Non-blocking haptic trigger with cooldown (F-C1)
-                now = millis();
-                if (!gHapticActive && (now - gLastHapticTime > HAPTIC_COOLDOWN_MS)) {
-                    gHapticActive = true;
-                    gHapticStart = now;
-                    gLastHapticTime = now;
-                    ledcWrite(VIB_PIN, HAPTIC_PWM_DUTY);
+            if (!gCooldownActive) {
+                if (mse >= 0.0f && mse > gAdaptiveThreshold) {
+                    gAnomalyCounter++;
+                } else {
+                    gAnomalyCounter = 0;
+                }
+                imuAnomalyNow = (gAnomalyCounter >= ANOMALY_CONFIRM_COUNT);
+            } else {
+                gAnomalyCounter = 0;
+            }
+
+            now = millis();
+
+            if (!gCooldownActive) {
+                // Start a new 5s window on first confirmed anomaly
+                if (!gWindowActive && imuAnomalyNow) {
+                    gWindowActive = true;
+                    gWindowStartMs = now;
+                    gAnomalyEventCount = 1;
+                    gContinuousAnomalyStartMs = now;
+                    gPrevImuAnomaly = true;
                 }
 
-                Serial.print("[ALERT] MSE=");
-                Serial.print(mse, 4);
-                Serial.print(" thresh=");
-                Serial.println(gAdaptiveThreshold, 4);
-            } else {
-                gAnomalyDetected.store(false);
+                if (gWindowActive) {
+                    if (imuAnomalyNow && !gPrevImuAnomaly) {
+                        gAnomalyEventCount++;
+                        gContinuousAnomalyStartMs = now;
+                    }
+
+                    if (!imuAnomalyNow) {
+                        gContinuousAnomalyStartMs = 0;
+                    }
+
+                    bool continuousForWholeWindow =
+                        imuAnomalyNow &&
+                        gContinuousAnomalyStartMs > 0 &&
+                        (now - gContinuousAnomalyStartMs >= ANOMALY_WINDOW_MS);
+
+                    bool windowExpired = (now - gWindowStartMs >= ANOMALY_WINDOW_MS);
+
+                    if (continuousForWholeWindow || (windowExpired && gAnomalyEventCount >= 3)) {
+                        // TRIGGER ALERT
+                        anomaly = true;
+                        gAnomalyDetected.store(true);
+
+                        startDoubleVibration();
+
+                        gCooldownActive = true;
+                        gCooldownStartMs = now;
+
+                        gWindowActive = false;
+                        gAnomalyEventCount = 0;
+                        gPrevImuAnomaly = false;
+                        gContinuousAnomalyStartMs = 0;
+
+                        if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                            Serial.printf("[ALERT] Anomaly detected! MSE=%.3f  EMG=%.0f\n", mse, emg);
+                            xSemaphoreGive(gSerialMutex);
+                        }
+                    } else if (windowExpired) {
+                        gWindowActive = false;
+                        gAnomalyEventCount = 0;
+                        gPrevImuAnomaly = false;
+                        gContinuousAnomalyStartMs = 0;
+                        gAnomalyDetected.store(false);
+                    } else {
+                        anomaly = imuAnomalyNow;
+                        gAnomalyDetected.store(anomaly);
+                        gPrevImuAnomaly = imuAnomalyNow;
+                    }
+                } else {
+                    anomaly = imuAnomalyNow;
+                    gAnomalyDetected.store(anomaly);
+                    gPrevImuAnomaly = imuAnomalyNow;
+                }
             }
 
-            // Debug: periodic MSE logging
-            Serial.print("[ML] MSE=");
-            Serial.print(mse, 6);
-            Serial.print(" thresh=");
-            Serial.print(gAdaptiveThreshold, 6);
-            Serial.print(" us=");
-            Serial.println(dt);
+            // Clean aligned diagnostic line
+            if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                Serial.printf("[DIAG] HR=%-3d  EMG=%-8.0f", (int)hr, emg);
+                if (gEmgRawADC > 0) {
+                    Serial.printf("(FLT=%-4d,RAW=%-4d)", gEmgFiltered, gEmgRawADC);
+                }
+                Serial.printf("  MOT=%-6.2f  MSE=%.6f  THR=%.6f  ACC=%5.1f%%  CNT=%d  ANOM=%s\n",
+                    mot, mse, gAdaptiveThreshold, gAccuracyPercent, gAnomalyCounter,
+                    anomaly ? "YES" : "NO");
+                xSemaphoreGive(gSerialMutex);
+            }
         }
 
         // 0.5 Hz -> 2000 ms period
@@ -906,7 +1253,10 @@ void serialTask(void* pvParameters) {
     TickType_t xLastWakeTime = xTaskGetTickCount();
 
     // Print CSV header once
-    Serial.println("millis,heart_rate,spo2,emg_envelope,motion_magnitude,alert,emg_cal_threshold");
+    if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        Serial.println("millis,heart_rate,spo2,emg_envelope,motion_magnitude,alert,emg_cal_threshold");
+        xSemaphoreGive(gSerialMutex);
+    }
 
     for (;;) {
         float hr   = 0.0f;
@@ -929,20 +1279,11 @@ void serialTask(void* pvParameters) {
         alert = gAnomalyDetected.load();
 
         // CSV row
-        Serial.print(ts);
-        Serial.print(",");
-        Serial.print(hr, 1);
-        Serial.print(",");
-        Serial.print(spo2, 1);
-        Serial.print(",");
-        Serial.print(emg, 2);
-        Serial.print(",");
-        Serial.print(mot, 2);
-        Serial.print(",");
-        Serial.println(alert ? 1 : 0);
-        // EMG calibration threshold (for monitoring)
-        Serial.print("[EMG_THR] ");
-        Serial.println(sEmgCalThreshold);
+        if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            Serial.printf("[CSV] %lu,%.1f,%.1f,%.2f,%.2f,%d\n",
+                ts, hr, spo2, emg, mot, alert ? 1 : 0);
+            xSemaphoreGive(gSerialMutex);
+        }
 
         // BLE telemetry notifications
         if (deviceConnected.load()) {
@@ -953,10 +1294,14 @@ void serialTask(void* pvParameters) {
             memcpy(telemetry + 12, &mot,  4);
             pTelemetryChar->setValue(telemetry, 16);
             pTelemetryChar->notify();
+            vTaskDelay(pdMS_TO_TICKS(20));  // Let the TX buffer flush before next notify
 
             static int notifyCount = 0;
             if (++notifyCount % 10 == 0) {
-                Serial.printf("[BLE] Notifications sent: %d\n", notifyCount);
+                if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                    Serial.printf("[BLE] Notifications sent: %d\n", notifyCount);
+                    xSemaphoreGive(gSerialMutex);
+                }
             }
 
             uint8_t alertByte = alert ? 1 : 0;
@@ -968,7 +1313,10 @@ void serialTask(void* pvParameters) {
         if (!deviceConnected.load() && oldDeviceConnected.load()) {
             vTaskDelay(pdMS_TO_TICKS(500));  // small pause before restarting advertising
             pServer->startAdvertising();
-            Serial.println("BLE: Restarting advertising");
+            if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                Serial.println("BLE: Restarting advertising");
+                xSemaphoreGive(gSerialMutex);
+            }
         }
         oldDeviceConnected.store(deviceConnected.load());
 

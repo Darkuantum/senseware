@@ -7,8 +7,8 @@
         @click="handleToggle"
       >
         <span v-if="state === 'connecting'" class="spinner" />
-        <span v-else-if="state === 'connected'" class="icon disconnect">&#x2715;</span>
-        <span v-else class="icon connect">&#x2795;</span>
+        <BluetoothSearching v-else-if="state === 'connected'" :size="16" class="btn-icon" />
+        <Bluetooth v-else :size="16" class="btn-icon" />
         {{ buttonText }}
       </button>
 
@@ -35,13 +35,13 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { Bluetooth, BluetoothSearching } from 'lucide-vue-next'
 import { useBluetooth, STATE } from '../composables/useBluetooth.js'
 
 const ble = useBluetooth()
 
 const state = ref(STATE.DISCONNECTED)
 const deviceName = ref('')
-// Fix #7: Use isSecureContext instead of hostname check
 const isSecureContext = ref(false)
 const isSupported = ble.isSupported
 const isAlerting = ref(false)
@@ -51,7 +51,7 @@ const buttonText = computed(() => {
     case STATE.CONNECTING: return 'Connecting...'
     case STATE.CONNECTED: return 'Disconnect'
     case STATE.DISCONNECTING: return 'Disconnecting...'
-    default: return 'Connect to Device'
+    default: return 'Connect Device'
   }
 })
 
@@ -137,28 +137,28 @@ async function handleToggle() {
 .connection-panel {
   background: var(--card-bg);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 1rem 1.25rem;
+  border-radius: var(--radius-md);
+  padding: 0.75rem 1rem;
 }
 
 .panel-row {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 0.85rem;
   flex-wrap: wrap;
 }
 
 .btn {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.6rem 1.25rem;
+  gap: 0.45rem;
+  padding: 0.5rem 1.1rem;
   border: none;
-  border-radius: 8px;
-  font-size: 0.9rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--transition-normal);
 }
 
 .btn:disabled {
@@ -168,7 +168,7 @@ async function handleToggle() {
 
 .btn-primary {
   background: var(--accent);
-  color: #fff;
+  color: var(--bg-primary);
 }
 
 .btn-primary:hover:not(:disabled) {
@@ -176,98 +176,98 @@ async function handleToggle() {
   transform: translateY(-1px);
 }
 
-.icon {
-  font-size: 1rem;
+.btn-icon {
+  flex-shrink: 0;
 }
 
 .status-badge {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.3rem 0.75rem;
-  border-radius: 20px;
-  font-size: 0.8rem;
+  padding: 0.28rem 0.7rem;
+  border-radius: 100px;
+  font-size: 0.75rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
 .status-dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
 }
 
 .status-badge.disconnected {
-  background: rgba(107, 114, 128, 0.2);
-  color: #9ca3af;
+  background: rgba(138, 123, 107, 0.15);
+  color: var(--text-muted);
 }
 .status-badge.disconnected .status-dot {
-  background: #6b7280;
+  background: var(--text-muted);
 }
 
 .status-badge.connected {
-  background: rgba(34, 197, 94, 0.15);
-  color: #22c55e;
+  background: rgba(90, 184, 143, 0.15);
+  color: var(--color-success);
 }
 .status-badge.connected .status-dot {
-  background: #22c55e;
-  box-shadow: 0 0 6px #22c55e;
+  background: var(--color-success);
+  box-shadow: 0 0 6px var(--color-success);
   animation: pulse-green 2s infinite;
 }
 
 .status-badge.connecting,
 .status-badge.disconnecting {
-  background: rgba(234, 179, 8, 0.15);
-  color: #eab308;
+  background: rgba(232, 177, 58, 0.15);
+  color: var(--color-warning);
 }
 .status-badge.connecting .status-dot {
-  background: #eab308;
+  background: var(--color-warning);
   animation: pulse-yellow 1s infinite;
 }
 .status-badge.disconnecting .status-dot {
-  background: #eab308;
+  background: var(--color-warning);
 }
 
 .status-badge.alerting {
-  background: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
+  background: rgba(232, 93, 74, 0.15);
+  color: var(--color-danger);
 }
 .status-badge.alerting .status-dot {
-  background: #ef4444;
-  box-shadow: 0 0 8px #ef4444;
+  background: var(--color-danger);
+  box-shadow: 0 0 8px var(--color-danger);
   animation: pulse-red 0.8s infinite;
 }
 
 .device-name {
   color: var(--text-secondary);
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   font-family: var(--mono);
 }
 
 .warning {
-  margin-top: 0.75rem;
-  padding: 0.6rem 0.8rem;
-  background: rgba(234, 179, 8, 0.1);
-  border-left: 3px solid #eab308;
+  margin-top: 0.65rem;
+  padding: 0.55rem 0.75rem;
+  background: rgba(232, 177, 58, 0.08);
+  border-left: 3px solid var(--color-warning);
   border-radius: 4px;
-  color: #fbbf24;
-  font-size: 0.82rem;
+  color: #f0c85a;
+  font-size: 0.8rem;
   line-height: 1.4;
 }
 
 .hint {
   margin-top: 0.5rem;
   color: var(--text-muted);
-  font-size: 0.78rem;
+  font-size: 0.75rem;
 }
 
 .spinner {
   display: inline-block;
   width: 14px;
   height: 14px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  border-top-color: #fff;
+  border: 2px solid rgba(0, 0, 0, 0.2);
+  border-top-color: var(--bg-primary);
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
 }
@@ -277,8 +277,8 @@ async function handleToggle() {
 }
 
 @keyframes pulse-green {
-  0%, 100% { box-shadow: 0 0 4px #22c55e; }
-  50% { box-shadow: 0 0 10px #22c55e; }
+  0%, 100% { box-shadow: 0 0 4px var(--color-success); }
+  50% { box-shadow: 0 0 10px var(--color-success); }
 }
 
 @keyframes pulse-yellow {
@@ -287,7 +287,7 @@ async function handleToggle() {
 }
 
 @keyframes pulse-red {
-  0%, 100% { box-shadow: 0 0 6px #ef4444; }
-  50% { box-shadow: 0 0 14px #ef4444; }
+  0%, 100% { box-shadow: 0 0 6px var(--color-danger); }
+  50% { box-shadow: 0 0 14px var(--color-danger); }
 }
 </style>

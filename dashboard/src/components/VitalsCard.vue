@@ -1,7 +1,10 @@
 <template>
   <div class="vitals-card" :class="colorClass">
+    <div class="card-top-bar" />
     <div class="card-header">
-      <span class="card-indicator" />
+      <div class="card-icon-wrap">
+        <component :is="iconComponent" :size="18" />
+      </div>
       <span class="card-label">{{ label }}</span>
     </div>
     <div class="card-value-row">
@@ -9,22 +12,40 @@
       <span class="card-unit">{{ unit }}</span>
     </div>
     <div v-if="showTrend" class="card-trend" :class="trendDirection">
-      {{ trendArrow }} {{ Math.abs(trendValue).toFixed(1) }}
+      <component :is="trendArrowIcon" :size="14" />
+      {{ Math.abs(trendValue).toFixed(1) }}
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed, ref, watch, onUnmounted } from 'vue'
+import { computed, ref, watch, onUnmounted, shallowRef, markRaw } from 'vue'
+import {
+  Heart,
+  Droplets,
+  Zap,
+  Navigation,
+  TrendingUp,
+  TrendingDown,
+} from 'lucide-vue-next'
 
 const props = defineProps({
   label: { type: String, required: true },
   value: { type: Number, default: 0 },
   unit: { type: String, default: '' },
-  color: { type: String, default: 'blue', validator: (v) => ['red', 'blue', 'green', 'purple'].includes(v) },
+  color: { type: String, default: 'info', validator: (v) => ['danger', 'purple', 'info', 'success'].includes(v) },
+  iconName: { type: String, default: 'Heart' },
   decimals: { type: Number, default: 1 },
 })
 
+const iconMap = {
+  Heart: shallowRef(markRaw(Heart)),
+  Droplets: shallowRef(markRaw(Droplets)),
+  Zap: shallowRef(markRaw(Zap)),
+  Navigation: shallowRef(markRaw(Navigation)),
+}
+
+const iconComponent = computed(() => iconMap[props.iconName] || iconMap.Heart)
 const colorClass = computed(() => `card-${props.color}`)
 
 const displayValue = computed(() => {
@@ -33,7 +54,6 @@ const displayValue = computed(() => {
 })
 
 // Simple trend tracking
-const previousValue = ref(props.value)
 const trendValue = ref(0)
 const showTrend = ref(false)
 let trendTimer = null
@@ -44,18 +64,15 @@ watch(
     if (oldVal !== null && oldVal !== undefined) {
       trendValue.value = newVal - oldVal
       showTrend.value = true
-      // Fix #4: Clear previous timer to prevent leak
       if (trendTimer) clearTimeout(trendTimer)
       trendTimer = setTimeout(() => {
         showTrend.value = false
         trendTimer = null
       }, 2000)
     }
-    previousValue.value = newVal
   }
 )
 
-// Fix #4: Clean up timer on unmount
 onUnmounted(() => {
   if (trendTimer) clearTimeout(trendTimer)
 })
@@ -64,8 +81,8 @@ const trendDirection = computed(() =>
   trendValue.value >= 0 ? 'trend-up' : 'trend-down'
 )
 
-const trendArrow = computed(() =>
-  trendValue.value >= 0 ? '↑' : '↓'
+const trendArrowIcon = computed(() =>
+  trendValue.value >= 0 ? shallowRef(markRaw(TrendingUp)) : shallowRef(markRaw(TrendingDown))
 )
 </script>
 
@@ -73,54 +90,63 @@ const trendArrow = computed(() =>
 .vitals-card {
   background: var(--card-bg);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 1rem 1.25rem;
+  border-radius: var(--radius-md);
+  padding: 1.1rem 1.25rem 1rem;
+  position: relative;
+  overflow: hidden;
+  transition: all var(--transition-normal);
   min-width: 140px;
-  transition: border-color 0.3s ease;
 }
 
 .vitals-card:hover {
   border-color: var(--border-hover);
+  background: var(--card-bg-hover);
+}
+
+/* Top accent bar */
+.card-top-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  opacity: 0.8;
+}
+
+.card-danger .card-top-bar { background: linear-gradient(90deg, var(--color-danger), rgba(232, 93, 74, 0.3)); }
+.card-purple .card-top-bar { background: linear-gradient(90deg, var(--color-purple), rgba(176, 138, 219, 0.3)); }
+.card-info .card-top-bar { background: linear-gradient(90deg, var(--color-info), rgba(90, 158, 199, 0.3)); }
+.card-success .card-top-bar { background: linear-gradient(90deg, var(--color-success), rgba(90, 184, 143, 0.3)); }
+
+.vitals-card:hover .card-top-bar {
+  opacity: 1;
 }
 
 .card-header {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.6rem;
 }
 
-.card-indicator {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
+.card-icon-wrap {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.card-red .card-indicator {
-  background: #ef4444;
-  box-shadow: 0 0 6px rgba(239, 68, 68, 0.5);
-}
-
-.card-blue .card-indicator {
-  background: #3b82f6;
-  box-shadow: 0 0 6px rgba(59, 130, 246, 0.5);
-}
-
-.card-green .card-indicator {
-  background: #22c55e;
-  box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
-}
-
-/* Fix #5: Purple/Blue theme for SpO2 */
-.card-purple .card-indicator {
-  background: #a78bfa;
-  box-shadow: 0 0 6px rgba(167, 139, 250, 0.5);
-}
+.card-danger .card-icon-wrap { background: rgba(232, 93, 74, 0.12); color: var(--color-danger); }
+.card-purple .card-icon-wrap { background: rgba(176, 138, 219, 0.12); color: var(--color-purple); }
+.card-info .card-icon-wrap { background: rgba(90, 158, 199, 0.12); color: var(--color-info); }
+.card-success .card-icon-wrap { background: rgba(90, 184, 143, 0.12); color: var(--color-success); }
 
 .card-label {
-  font-size: 0.78rem;
+  font-size: 0.75rem;
   font-weight: 500;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.8px;
 }
@@ -132,47 +158,37 @@ const trendArrow = computed(() =>
 }
 
 .card-value {
-  font-size: 2rem;
+  font-size: 1.85rem;
   font-weight: 700;
   font-family: var(--mono);
-  color: var(--text-primary);
   line-height: 1.1;
 }
 
-.card-red .card-value {
-  color: #fca5a5;
-}
-
-.card-blue .card-value {
-  color: #93c5fd;
-}
-
-.card-green .card-value {
-  color: #86efac;
-}
-
-/* Fix #5: Purple/Blue value color for SpO2 */
-.card-purple .card-value {
-  color: #c4b5fd;
-}
+.card-danger .card-value { color: #f0a09a; }
+.card-purple .card-value { color: #d0c4f0; }
+.card-info .card-value { color: #9ecce0; }
+.card-success .card-value { color: #9dd8be; }
 
 .card-unit {
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   font-weight: 500;
   color: var(--text-muted);
 }
 
 .card-trend {
-  margin-top: 0.3rem;
-  font-size: 0.75rem;
+  margin-top: 0.35rem;
+  font-size: 0.72rem;
   font-family: var(--mono);
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
 }
 
 .trend-up {
-  color: #ef4444;
+  color: var(--color-danger);
 }
 
 .trend-down {
-  color: #22c55e;
+  color: var(--color-success);
 }
 </style>

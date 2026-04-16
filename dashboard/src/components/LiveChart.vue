@@ -9,6 +9,7 @@
     <div class="chart-wrapper">
       <Line v-if="hasData" :data="chartData" :options="chartOptions" />
       <div v-else class="chart-placeholder">
+        <Activity :size="32" class="placeholder-icon" />
         <p>Waiting for telemetry data...</p>
         <p class="hint">Connect to the Senseware device to see live data</p>
       </div>
@@ -18,6 +19,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { Activity } from 'lucide-vue-next'
 import { Line } from 'vue-chartjs'
 import {
   Chart as ChartJS,
@@ -92,8 +94,8 @@ const chartData = computed(() => ({
     {
       label: 'Heart Rate (BPM)',
       data: hrData.value,
-      borderColor: '#ef4444',
-      backgroundColor: 'rgba(239, 68, 68, 0.1)',
+      borderColor: '#e85d4a',
+      backgroundColor: 'rgba(232, 93, 74, 0.08)',
       fill: true,
       tension: 0.4,
       borderWidth: 2,
@@ -104,8 +106,8 @@ const chartData = computed(() => ({
     {
       label: 'SpO2 (%)',
       data: spo2Data.value,
-      borderColor: '#a78bfa',
-      backgroundColor: 'rgba(167, 139, 250, 0.1)',
+      borderColor: '#b08adb',
+      backgroundColor: 'rgba(176, 138, 219, 0.08)',
       fill: true,
       tension: 0.4,
       borderWidth: 2,
@@ -116,8 +118,8 @@ const chartData = computed(() => ({
     {
       label: 'EMG Envelope (μV)',
       data: emgData.value,
-      borderColor: '#3b82f6',
-      backgroundColor: 'rgba(59, 130, 246, 0.1)',
+      borderColor: '#5a9ec7',
+      backgroundColor: 'rgba(90, 158, 199, 0.08)',
       fill: true,
       tension: 0.4,
       borderWidth: 2,
@@ -128,8 +130,8 @@ const chartData = computed(() => ({
     {
       label: 'Motion (g)',
       data: motionData.value,
-      borderColor: '#22c55e',
-      backgroundColor: 'rgba(34, 197, 94, 0.1)',
+      borderColor: '#5ab88f',
+      backgroundColor: 'rgba(90, 184, 143, 0.08)',
       fill: true,
       tension: 0.4,
       borderWidth: 2,
@@ -156,7 +158,7 @@ const chartOptions = {
       display: true,
       position: 'bottom',
       labels: {
-        color: '#9ca3af',
+        color: '#8a7b6b',
         font: { size: 11 },
         usePointStyle: true,
         pointStyle: 'circle',
@@ -164,10 +166,10 @@ const chartOptions = {
       },
     },
     tooltip: {
-      backgroundColor: 'rgba(15, 23, 42, 0.9)',
-      titleColor: '#f1f5f9',
-      bodyColor: '#cbd5e1',
-      borderColor: '#334155',
+      backgroundColor: 'rgba(26, 22, 20, 0.92)',
+      titleColor: '#f5f0eb',
+      bodyColor: '#b8a99a',
+      borderColor: '#3d342a',
       borderWidth: 1,
       cornerRadius: 8,
       padding: 10,
@@ -185,11 +187,11 @@ const chartOptions = {
   scales: {
     x: {
       grid: {
-        color: 'rgba(51, 65, 85, 0.3)',
+        color: 'rgba(61, 52, 42, 0.3)',
         border: { display: false },
       },
       ticks: {
-        color: '#64748b',
+        color: '#8a7b6b',
         font: { size: 10, family: 'monospace' },
         maxRotation: 0,
         maxTicksLimit: 8,
@@ -202,15 +204,15 @@ const chartOptions = {
       title: {
         display: true,
         text: 'BPM / SpO2',
-        color: '#ef4444',
+        color: '#e85d4a',
         font: { size: 11, weight: '600' },
       },
       grid: {
-        color: 'rgba(51, 65, 85, 0.3)',
+        color: 'rgba(61, 52, 42, 0.3)',
         border: { display: false },
       },
       ticks: {
-        color: '#64748b',
+        color: '#8a7b6b',
         font: { size: 10, family: 'monospace' },
       },
       min: 40,
@@ -223,14 +225,14 @@ const chartOptions = {
       title: {
         display: true,
         text: 'EMG / Motion',
-        color: '#3b82f6',
+        color: '#5a9ec7',
         font: { size: 11, weight: '600' },
       },
       grid: {
         drawOnChartArea: false,
       },
       ticks: {
-        color: '#64748b',
+        color: '#8a7b6b',
         font: { size: 10, family: 'monospace' },
       },
     },
@@ -242,7 +244,7 @@ const chartOptions = {
 .chart-container {
   background: var(--card-bg);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   padding: 1rem 1.25rem;
 }
 
@@ -278,6 +280,12 @@ const chartOptions = {
   justify-content: center;
   height: 100%;
   color: var(--text-muted);
+}
+
+.placeholder-icon {
+  color: var(--border-hover);
+  margin-bottom: 0.75rem;
+  opacity: 0.6;
 }
 
 .chart-placeholder p {
