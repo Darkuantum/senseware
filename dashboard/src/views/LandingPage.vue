@@ -1,5 +1,11 @@
 <template>
   <div class="landing">
+    <!-- HTTP Compatibility Warning -->
+    <div v-if="!httpSupported" class="compat-warning">
+      <AlertTriangle :size="16" />
+      <span>Your browser does not support HTTP fetch. The dashboard will not work. Please use <strong>Chrome</strong>, <strong>Edge</strong>, <strong>Firefox</strong>, or <strong>Safari</strong>.</span>
+    </div>
+
     <!-- ===== HERO ===== -->
     <section class="hero" id="hero">
       <div class="hero-bg">
@@ -172,7 +178,7 @@
 </template>
 
 <script setup>
-import { onMounted, onUnmounted, markRaw, shallowRef, defineAsyncComponent } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import {
   MonitorSmartphone,
   ArrowDown,
@@ -182,31 +188,31 @@ import {
   Brain,
   Bell,
   Cpu,
-  Bluetooth,
   Wifi,
   Layers,
   Clock,
   Code2,
+  AlertTriangle,
 } from 'lucide-vue-next'
 
 // Steps data
 const steps = [
   {
-    icon: shallowRef(markRaw(Activity)),
+    icon: Activity,
     title: 'Sense',
     desc: 'Wearable sensors continuously monitor heart rate (PPG), muscle tension (EMG), and motion patterns (IMU) — all sampled at high frequency for clinical-grade fidelity.',
     colorClass: 'step-sense',
   },
   {
-    icon: shallowRef(markRaw(Brain)),
+    icon: Brain,
     title: 'Detect',
     desc: 'A lightweight autoencoder running natively on the ESP32 learns your personal calm baseline. When physiological patterns deviate, it detects stress anomalies in real-time — no cloud needed.',
     colorClass: 'step-detect',
   },
   {
-    icon: shallowRef(markRaw(Bell)),
+    icon: Bell,
     title: 'Alert',
-    desc: 'Caregivers receive instant Bluetooth alerts on any phone or tablet. The companion dashboard visualizes live vitals and logs every intervention, enabling data-informed care decisions.',
+    desc: 'Caregivers receive instant alerts on any phone or tablet via HTTP. The companion dashboard visualizes live vitals and logs every intervention, enabling data-informed care decisions.',
     colorClass: 'step-alert',
   },
 ]
@@ -214,32 +220,32 @@ const steps = [
 // Tech stack data
 const techStack = [
   {
-    icon: shallowRef(markRaw(Cpu)),
+    icon: Cpu,
     name: 'ESP32',
     desc: 'Low-power microcontroller running the entire ML pipeline at the edge',
   },
   {
-    icon: shallowRef(markRaw(Brain)),
+    icon: Brain,
     name: 'TensorFlow Lite',
     desc: 'On-device autoencoder inference for real-time anomaly detection',
   },
   {
-    icon: shallowRef(markRaw(Bluetooth)),
-    name: 'Web Bluetooth',
-    desc: 'Direct browser-to-device BLE connection — no app required',
+    icon: Wifi,
+    name: 'HTTP',
+    desc: 'Real-time Server-Sent Events push from ESP32 — no app required',
   },
   {
-    icon: shallowRef(markRaw(Layers)),
+    icon: Layers,
     name: 'Autoencoder ML',
     desc: 'Learns personal calm baselines and flags physiological deviations',
   },
   {
-    icon: shallowRef(markRaw(Clock)),
+    icon: Clock,
     name: 'FreeRTOS',
     desc: 'Deterministic real-time OS for reliable sensor sampling',
   },
   {
-    icon: shallowRef(markRaw(Code2)),
+    icon: Code2,
     name: 'Vue.js',
     desc: 'Lightweight reactive UI for the caregiver dashboard',
   },
@@ -254,9 +260,14 @@ const team = [
 ]
 
 // ===== Scroll Reveal (IntersectionObserver) =====
+// HTTP browser support check
+const httpSupported = ref(true)
+
 let observer = null
 
 onMounted(() => {
+  httpSupported.value = typeof window !== 'undefined' && 'fetch' in window
+
   observer = new IntersectionObserver(
     (entries) => {
       entries.forEach((entry) => {
@@ -281,6 +292,27 @@ onUnmounted(() => {
 /* ===== LANDING CONTAINER ===== */
 .landing {
   overflow-x: hidden;
+}
+
+/* ===== BROWSER COMPATIBILITY WARNING ===== */
+.compat-warning {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.7rem 1.5rem;
+  background: rgba(232, 93, 74, 0.12);
+  border-bottom: 1px solid rgba(232, 93, 74, 0.3);
+  color: #f0a09a;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  text-align: center;
+  justify-content: center;
+  position: relative;
+  z-index: 20;
+}
+
+.compat-warning strong {
+  color: #f5f0eb;
 }
 
 /* ===== HERO ===== */

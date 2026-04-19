@@ -1,110 +1,101 @@
 <template>
   <div class="connection-panel">
     <div class="panel-row">
-      <button
-        class="btn btn-primary"
-        :disabled="state === 'connecting' || state === 'disconnecting' || !isSupported"
-        @click="handleToggle"
-      >
-        <span v-if="state === 'connecting'" class="spinner" />
-        <BluetoothSearching v-else-if="state === 'connected'" :size="16" class="btn-icon" />
-        <Bluetooth v-else :size="16" class="btn-icon" />
-        {{ buttonText }}
-      </button>
+      <!-- IP Input + Connect Button (when disconnected) -->
+      <template v-if="state === 'disconnected'">
+        <div class="ip-input-group">
+          <Wifi :size="14" class="ip-icon" />
+          <input
+            v-model="ipInput"
+            type="text"
+            class="ip-input"
+            placeholder="192.168.x.x"
+            :disabled="state === 'connecting'"
+            @keyup.enter="handleConnect"
+          />
+          <span class="ip-port">:81</span>
+        </div>
+        <button
+          class="btn btn-primary"
+          :disabled="!ipInput.trim() || state === 'connecting'"
+          @click="handleConnect"
+        >
+          Connect
+        </button>
+      </template>
 
-      <span class="status-badge" :class="statusClass">
-        <span class="status-dot" />
-        {{ statusLabel }}
-      </span>
+      <!-- Connecting state -->
+      <template v-else-if="state === 'connecting'">
+        <button class="btn btn-primary" disabled>
+          <span class="spinner" />
+          Connecting to {{ ip }}...
+        </button>
+        <button class="btn btn-ghost" @click="handleDisconnect">
+          Cancel
+        </button>
+      </template>
 
-      <span v-if="deviceName" class="device-name">{{ deviceName }}</span>
+      <!-- Connected state -->
+      <template v-else>
+        <span class="status-badge connected">
+          <span class="status-dot" />
+          Connected
+        </span>
+        <span class="device-name">{{ ip }}</span>
+        <button class="btn btn-danger" @click="handleDisconnect">
+          <WifiOff :size="14" class="btn-icon" />
+          Disconnect
+        </button>
+      </template>
     </div>
 
     <p v-if="!isSupported" class="warning">
-      Web Bluetooth is not supported in this browser. Please use
-      <strong>Google Chrome</strong> or <strong>Microsoft Edge</strong> on
-      <strong>HTTPS</strong> or <strong>localhost</strong>.
+      <AlertTriangle :size="14" class="warning-icon" />
+      HTTP is not supported in this browser. Please use a modern browser
+      such as <strong>Chrome</strong>, <strong>Edge</strong>, or <strong>Firefox</strong>.
     </p>
 
-    <p v-if="isSupported && !isSecureContext" class="hint">
-      Web Bluetooth requires HTTPS. Make sure this page is served over a secure
-      connection or via localhost.
+    <p v-if="isSupported && errorMsg" class="error">
+      {{ errorMsg }}
     </p>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { Bluetooth, BluetoothSearching } from 'lucide-vue-next'
-import { useBluetooth, STATE } from '../composables/useBluetooth.js'
+import { ref, onMounted, onUnmounted } from 'vue'
+import { Wifi, WifiOff, AlertTriangle } from 'lucide-vue-next'
+import { useTelemetry } from '../composables/useTelemetry.js'
 
-const ble = useBluetooth()
+const ws = useTelemetry()
 
-const state = ref(STATE.DISCONNECTED)
-const deviceName = ref('')
-const isSecureContext = ref(false)
-const isSupported = ble.isSupported
+const state = ref('disconnected')
+const ip = ref('')
+const ipInput = ref('')
+const isSupported = ref(true)
+const errorMsg = ref('')
 const isAlerting = ref(false)
+let alertTimeout = null
 
-const buttonText = computed(() => {
-  switch (state.value) {
-    case STATE.CONNECTING: return 'Connecting...'
-    case STATE.CONNECTED: return 'Disconnect'
-    case STATE.DISCONNECTING: return 'Disconnecting...'
-    default: return 'Connect Device'
-  }
-})
-
-const statusClass = computed(() => {
-  if (isAlerting.value) return 'alerting'
-  switch (state.value) {
-    case STATE.CONNECTED: return 'connected'
-    case STATE.CONNECTING: return 'connecting'
-    case STATE.DISCONNECTING: return 'disconnecting'
-    default: return 'disconnected'
-  }
-})
-
-const statusLabel = computed(() => {
-  if (isAlerting.value) return 'Alerting'
-  switch (state.value) {
-    case STATE.CONNECTED: return 'Connected'
-    case STATE.CONNECTING: return 'Connecting'
-    case STATE.DISCONNECTING: return 'Disconnecting'
-    default: return 'Disconnected'
-  }
-})
-
+// Check HTTP fetch support
 onMounted(() => {
-  isSecureContext.value = window.isSecureContext
+  isSupported.value = typeof window !== 'undefined' && 'fetch' in window
 })
 
+// Listen to state changes
 const unsubscribers = []
 
 onMounted(() => {
   unsubscribers.push(
-    ble.on('stateChange', ({ new: newState }) => {
+    ws.manager.on('stateChange', (newState) => {
       state.value = newState
-    })
-  )
-
-  unsubscribers.push(
-    ble.on('connected', (data) => {
-      deviceName.value = data.name || 'Senseware'
-    })
-  )
-
-  unsubscribers.push(
-    ble.on('reconnected', (data) => {
-      deviceName.value = data.name || 'Senseware'
+      errorMsg.value = ''
     })
   )
 
   // Alert state — go into alerting mode when anomaly detected, return after 5s
-  let alertTimeout = null
   unsubscribers.push(
-    ble.on('alert', ({ anomaly }) => {
-      if (anomaly) {
+    ws.manager.on('alert', ({ alert }) => {
+      if (alert) {
         isAlerting.value = true
         if (alertTimeout) clearTimeout(alertTimeout)
         alertTimeout = setTimeout(() => {
@@ -114,22 +105,28 @@ onMounted(() => {
       }
     })
   )
+
+  unsubscribers.push(
+    ws.manager.on('error', ({ message }) => {
+      errorMsg.value = message || 'Connection failed'
+    })
+  )
 })
 
 onUnmounted(() => {
   unsubscribers.forEach((unsub) => unsub())
+  if (alertTimeout) clearTimeout(alertTimeout)
 })
 
-async function handleToggle() {
-  if (state.value === STATE.CONNECTED || state.value === STATE.CONNECTING || state.value === STATE.DISCONNECTING) {
-    await ble.disconnect()
-  } else {
-    try {
-      await ble.connect()
-    } catch {
-      // User cancelled or error — handled in composable
-    }
-  }
+function handleConnect() {
+  const trimmedIp = ipInput.value.trim()
+  if (!trimmedIp) return
+  ip.value = trimmedIp
+  ws.connect(trimmedIp)
+}
+
+function handleDisconnect() {
+  ws.disconnect()
 }
 </script>
 
@@ -144,10 +141,57 @@ async function handleToggle() {
 .panel-row {
   display: flex;
   align-items: center;
-  gap: 0.85rem;
+  gap: 0.75rem;
   flex-wrap: wrap;
 }
 
+/* IP Input Group */
+.ip-input-group {
+  display: inline-flex;
+  align-items: center;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 0.6rem;
+  transition: border-color var(--transition-fast);
+  max-width: 220px;
+  width: 100%;
+}
+
+.ip-input-group:focus-within {
+  border-color: var(--accent);
+}
+
+.ip-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.ip-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  font-family: var(--mono);
+  padding: 0.45rem 0.4rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.ip-input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.ip-port {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-family: var(--mono);
+  flex-shrink: 0;
+}
+
+/* Buttons */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -159,6 +203,7 @@ async function handleToggle() {
   font-weight: 600;
   cursor: pointer;
   transition: all var(--transition-normal);
+  white-space: nowrap;
 }
 
 .btn:disabled {
@@ -176,10 +221,32 @@ async function handleToggle() {
   transform: translateY(-1px);
 }
 
+.btn-danger {
+  background: rgba(232, 93, 74, 0.15);
+  color: var(--color-danger);
+  border: 1px solid rgba(232, 93, 74, 0.3);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: rgba(232, 93, 74, 0.25);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  border-color: var(--border-hover);
+  color: var(--text-primary);
+}
+
 .btn-icon {
   flex-shrink: 0;
 }
 
+/* Status badge */
 .status-badge {
   display: inline-flex;
   align-items: center;
@@ -198,53 +265,25 @@ async function handleToggle() {
   border-radius: 50%;
 }
 
-.status-badge.disconnected {
-  background: rgba(138, 123, 107, 0.15);
-  color: var(--text-muted);
-}
-.status-badge.disconnected .status-dot {
-  background: var(--text-muted);
-}
-
 .status-badge.connected {
   background: rgba(90, 184, 143, 0.15);
   color: var(--color-success);
 }
+
 .status-badge.connected .status-dot {
   background: var(--color-success);
   box-shadow: 0 0 6px var(--color-success);
   animation: pulse-green 2s infinite;
 }
 
-.status-badge.connecting,
-.status-badge.disconnecting {
-  background: rgba(232, 177, 58, 0.15);
-  color: var(--color-warning);
-}
-.status-badge.connecting .status-dot {
-  background: var(--color-warning);
-  animation: pulse-yellow 1s infinite;
-}
-.status-badge.disconnecting .status-dot {
-  background: var(--color-warning);
-}
-
-.status-badge.alerting {
-  background: rgba(232, 93, 74, 0.15);
-  color: var(--color-danger);
-}
-.status-badge.alerting .status-dot {
-  background: var(--color-danger);
-  box-shadow: 0 0 8px var(--color-danger);
-  animation: pulse-red 0.8s infinite;
-}
-
+/* Device name */
 .device-name {
   color: var(--text-secondary);
   font-size: 0.82rem;
   font-family: var(--mono);
 }
 
+/* Warnings */
 .warning {
   margin-top: 0.65rem;
   padding: 0.55rem 0.75rem;
@@ -254,14 +293,28 @@ async function handleToggle() {
   color: #f0c85a;
   font-size: 0.8rem;
   line-height: 1.4;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
 }
 
-.hint {
+.warning-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.error {
   margin-top: 0.5rem;
-  color: var(--text-muted);
-  font-size: 0.75rem;
+  padding: 0.45rem 0.7rem;
+  background: rgba(232, 93, 74, 0.08);
+  border-left: 3px solid var(--color-danger);
+  border-radius: 4px;
+  color: #f0a09a;
+  font-size: 0.78rem;
+  font-family: var(--mono);
 }
 
+/* Spinner */
 .spinner {
   display: inline-block;
   width: 14px;
@@ -279,15 +332,5 @@ async function handleToggle() {
 @keyframes pulse-green {
   0%, 100% { box-shadow: 0 0 4px var(--color-success); }
   50% { box-shadow: 0 0 10px var(--color-success); }
-}
-
-@keyframes pulse-yellow {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
-}
-
-@keyframes pulse-red {
-  0%, 100% { box-shadow: 0 0 6px var(--color-danger); }
-  50% { box-shadow: 0 0 14px var(--color-danger); }
 }
 </style>

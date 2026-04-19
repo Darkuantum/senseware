@@ -7,8 +7,8 @@
       </span>
     </div>
     <div class="chart-wrapper">
-      <Line v-if="hasData" :data="chartData" :options="chartOptions" />
-      <div v-else class="chart-placeholder">
+      <Line v-if="chartMounted" :data="chartData" :options="chartOptions" />
+      <div v-if="!hasData" class="chart-placeholder">
         <Activity :size="32" class="placeholder-icon" />
         <p>Waiting for telemetry data...</p>
         <p class="hint">Connect to the Senseware device to see live data</p>
@@ -31,7 +31,7 @@ import {
   Tooltip,
   Legend,
 } from 'chart.js'
-import { useBluetooth } from '../composables/useBluetooth.js'
+import { useTelemetry } from '../composables/useTelemetry.js'
 
 // Register Chart.js components
 ChartJS.register(
@@ -44,41 +44,81 @@ ChartJS.register(
   Legend
 )
 
-const ble = useBluetooth()
+const ws = useTelemetry()
+
+const chartMounted = ref(false)
 
 const MAX_POINTS = 60
 
-const hrData = ref([])
-const spo2Data = ref([])
-const emgData = ref([])
-const motionData = ref([])
-const labels = ref([])
+// Plain (non-reactive) arrays — avoid Chart.js reactivity loop
+const _labels = []
+const _hrData = []
+const _spo2Data = []
+const _emgData = []
+const _motionData = []
+const dataVersion = ref(0)
 
-const dataPointCount = computed(() => hrData.value.length)
-const hasData = computed(() => hrData.value.length > 1)
+// Pre-fill arrays for fixed-width rolling graph
+for (let i = 0; i < MAX_POINTS; i++) {
+  _labels.push('')
+  _hrData.push(null)
+  _spo2Data.push(null)
+  _emgData.push(null)
+  _motionData.push(null)
+}
 
-// Unsubscribers for BLE events
+function pushDataPoint(data) {
+  const now = new Date()
+  const timeLabel = now.toLocaleTimeString('en-US', { hour12: false })
+  _labels.push(timeLabel)
+  _hrData.push(data.hr)
+  _spo2Data.push(data.spo2)
+  _emgData.push(data.emg)
+  _motionData.push(data.mot)
+  // Always maintain exactly MAX_POINTS
+  while (_labels.length > MAX_POINTS) {
+    _labels.shift()
+    _hrData.shift()
+    _spo2Data.shift()
+    _emgData.shift()
+    _motionData.shift()
+  }
+  dataVersion.value++
+}
+
+const dataPointCount = computed(() => _hrData.filter(v => v !== null).length)
+const hasData = computed(() => _hrData.some(v => v !== null))
+
+// Unsubscribers for telemetry events
 let unsubscribers = []
 
 onMounted(() => {
+  chartMounted.value = true
+
   unsubscribers.push(
-    ble.on('telemetry', ({ heartRate, spo2, emgEnvelope, motionMagnitude }) => {
-      const now = new Date()
-      const timeLabel = now.toLocaleTimeString('en-US', { hour12: false })
+    ws.manager.on('telemetry', (data) => {
+      pushDataPoint(data)
+    })
+  )
 
-      labels.value.push(timeLabel)
-      hrData.value.push(heartRate)
-      spo2Data.value.push(spo2)
-      emgData.value.push(emgEnvelope)
-      motionData.value.push(motionMagnitude)
-
-      // Decimate to prevent memory growth
-      if (labels.value.length > MAX_POINTS) {
-        labels.value.shift()
-        hrData.value.shift()
-        spo2Data.value.shift()
-        emgData.value.shift()
-        motionData.value.shift()
+  // Clear chart data on disconnect
+  unsubscribers.push(
+    ws.manager.on('stateChange', (newState) => {
+      if (newState === 'disconnected') {
+        _labels.length = 0
+        _hrData.length = 0
+        _spo2Data.length = 0
+        _emgData.length = 0
+        _motionData.length = 0
+        // Re-pre-fill
+        for (let i = 0; i < MAX_POINTS; i++) {
+          _labels.push('')
+          _hrData.push(null)
+          _spo2Data.push(null)
+          _emgData.push(null)
+          _motionData.push(null)
+        }
+        dataVersion.value++
       }
     })
   )
@@ -88,66 +128,73 @@ onUnmounted(() => {
   unsubscribers.forEach((u) => u())
 })
 
-const chartData = computed(() => ({
-  labels: labels.value,
-  datasets: [
-    {
-      label: 'Heart Rate (BPM)',
-      data: hrData.value,
-      borderColor: '#e85d4a',
-      backgroundColor: 'rgba(232, 93, 74, 0.08)',
-      fill: true,
-      tension: 0.4,
-      borderWidth: 2,
-      pointRadius: 0,
-      pointHoverRadius: 4,
-      yAxisID: 'y',
-    },
-    {
-      label: 'SpO2 (%)',
-      data: spo2Data.value,
-      borderColor: '#b08adb',
-      backgroundColor: 'rgba(176, 138, 219, 0.08)',
-      fill: true,
-      tension: 0.4,
-      borderWidth: 2,
-      pointRadius: 0,
-      pointHoverRadius: 4,
-      yAxisID: 'y',
-    },
-    {
-      label: 'EMG Envelope (μV)',
-      data: emgData.value,
-      borderColor: '#5a9ec7',
-      backgroundColor: 'rgba(90, 158, 199, 0.08)',
-      fill: true,
-      tension: 0.4,
-      borderWidth: 2,
-      pointRadius: 0,
-      pointHoverRadius: 4,
-      yAxisID: 'y1',
-    },
-    {
-      label: 'Motion (g)',
-      data: motionData.value,
-      borderColor: '#5ab88f',
-      backgroundColor: 'rgba(90, 184, 143, 0.08)',
-      fill: true,
-      tension: 0.4,
-      borderWidth: 2,
-      pointRadius: 0,
-      pointHoverRadius: 4,
-      yAxisID: 'y1',
-    },
-  ],
-}))
+const chartData = computed(() => {
+  void dataVersion.value // Force re-computation when dataVersion changes
+  return {
+    labels: [..._labels],
+    datasets: [
+      {
+        label: 'Heart Rate (BPM)',
+        data: [..._hrData],
+        borderColor: '#e85d4a',
+        backgroundColor: 'rgba(232, 93, 74, 0.08)',
+        fill: true,
+        tension: 0.4,
+        borderWidth: 2,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        yAxisID: 'y',
+        spanGaps: true,
+      },
+      {
+        label: 'SpO2 (%)',
+        data: [..._spo2Data],
+        borderColor: '#b08adb',
+        backgroundColor: 'rgba(176, 138, 219, 0.08)',
+        fill: true,
+        tension: 0.4,
+        borderWidth: 2,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        yAxisID: 'y',
+        spanGaps: true,
+      },
+      {
+        label: 'EMG Envelope (μV)',
+        data: [..._emgData],
+        borderColor: '#5a9ec7',
+        backgroundColor: 'rgba(90, 158, 199, 0.08)',
+        fill: true,
+        tension: 0.4,
+        borderWidth: 2,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        yAxisID: 'y1',
+        spanGaps: true,
+      },
+      {
+        label: 'Motion (g)',
+        data: [..._motionData],
+        borderColor: '#5ab88f',
+        backgroundColor: 'rgba(90, 184, 143, 0.08)',
+        fill: true,
+        tension: 0.4,
+        borderWidth: 2,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        yAxisID: 'y2',
+        spanGaps: true,
+      },
+    ],
+  }
+})
 
 const chartOptions = {
   responsive: true,
   maintainAspectRatio: false,
   animation: {
-    duration: 300,
-    easing: 'easeOutQuart',
+    duration: 200,
+    easing: 'linear',
   },
   interaction: {
     mode: 'index',
@@ -224,7 +271,7 @@ const chartOptions = {
       position: 'right',
       title: {
         display: true,
-        text: 'EMG / Motion',
+        text: 'EMG (μV)',
         color: '#5a9ec7',
         font: { size: 11, weight: '600' },
       },
@@ -235,6 +282,26 @@ const chartOptions = {
         color: '#8a7b6b',
         font: { size: 10, family: 'monospace' },
       },
+    },
+    y2: {
+      type: 'linear',
+      display: true,
+      position: 'right',
+      title: {
+        display: true,
+        text: 'Motion (g)',
+        color: '#5ab88f',
+        font: { size: 11, weight: '600' },
+      },
+      grid: {
+        drawOnChartArea: false,
+      },
+      ticks: {
+        color: '#8a7b6b',
+        font: { size: 10, family: 'monospace' },
+      },
+      min: 0,
+      suggestedMax: 3,
     },
   },
 }

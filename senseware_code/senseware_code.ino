@@ -10,7 +10,7 @@
  *   LRA Vibration Motor via LEDC PWM
  *
  * Edge AI: TFLite Micro autoencoder for anomaly detection
- * BLE: GATT server with telemetry + alert characteristics
+ * WiFi: HTTP + SSE server for remote telemetry
  *
  * Major changes from prior version:
  *   - Replaced raw MAX30105 with DFRobot_BloodOxygen_S (real BPM/SpO2)
@@ -22,7 +22,12 @@
  *   - All audit fixes applied (atomic flags, stack sizes, alignment, etc.)
  *   - Merged demo behavior: windowed anomaly detection, double-pulse haptic,
  *     alert blink, dino animation, accuracy %, HR placeholder when no finger
+ *   - WiFi + SSE server for remote telemetry (BLE removed)
  */
+
+// Prevent Bluedroid Classic Bluetooth init (OBEX/L2CAP crash)
+#define CONFIG_BT_NIMBLE_ENABLED 0
+#define CONFIG_BTDM_CTRL_MODE_BLE_ONLY 1
 
 // =====================================================================
 // INCLUDES
@@ -38,11 +43,8 @@
 #include <atomic>
 #include <math.h>
 
-// BLE Communication (Phase 5)
-#include <BLEDevice.h>
-#include <BLEServer.h>
-#include <BLEUtils.h>
-#include <BLE2902.h>
+// WiFi + HTTP + SSE server
+#include <WiFi.h>
 
 // Edge AI model and TFLite runtime
 #include "model_data.h"
@@ -103,6 +105,7 @@ static void recoverI2C() {
 #define DISPLAY_TASK_STACK   3072
 #define SERIAL_TASK_STACK    4096
 #define INFERENCE_TASK_STACK 4096
+#define HTTP_TASK_STACK      4096
 
 // =====================================================================
 // HAPTIC CONFIGURATION — double-pulse pattern (merged from demo)
@@ -198,10 +201,8 @@ unsigned long gLastThresholdUpdate = 0;
 
 // =====================================================================
 // CROSS-CORE FLAGS (atomic, audit F-C4/F-W7)
-// =====================================================================
+// Note: deviceConnected / oldDeviceConnected atomics removed (was BLE-only)
 std::atomic<bool> gAnomalyDetected{false};
-std::atomic<bool> deviceConnected{false};
-std::atomic<bool> oldDeviceConnected{false};
 
 // HR polling mode — no interrupt flag needed (sensorTask polls every 4s)
 
@@ -251,58 +252,274 @@ bool gAlertBlinkActive = false;
 unsigned long gAlertBlinkStart = 0;
 
 // =====================================================================
-// BLE CONFIGURATION (Phase 5)
+// WIFI + HTTP + SSE SERVER
 // =====================================================================
-#define SERVICE_UUID           "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
-#define TELEMETRY_CHAR_UUID    "beb5483e-36e1-4688-b7f5-ea07361b26a8"
-#define ALERT_CHAR_UUID        "1c95d6e4-5dc9-4659-9290-43283a3b8d5a"
 
-BLEServer*          pServer        = nullptr;
-BLECharacteristic*  pTelemetryChar = nullptr;
-BLECharacteristic*  pAlertChar     = nullptr;
+// =====================================================================
+// WIFI CONFIGURATION
+// =====================================================================
+// Set to 1 for AP mode (ESP32 creates its own WiFi), 0 for STA mode (joins existing WiFi)
+#define SENSEWARE_WIFI_AP  0
 
-// BLE Server Callbacks — track connection state using atomics
-class ServerCallbacks : public BLEServerCallbacks {
-    void onConnect(BLEServer* pServer) override {
-        deviceConnected.store(true);
+#if SENSEWARE_WIFI_AP
+  // AP mode — ESP32 creates its own WiFi network
+  const char* AP_SSID     = "Senseware";
+  const char* AP_PASSWORD = "senseware";  // min 8 chars for WPA2
+#else
+  // STA mode — ESP32 joins existing WiFi (phone hotspot, router, etc.)
+  const char* WIFI_SSID     = "YOGA-PRO-DRK 5936";
+  const char* WIFI_PASSWORD = "89Ww233=";
+#endif
+
+WiFiServer httpServer(81);
+
+// SSE (Server-Sent Events) — single persistent connection for telemetry push
+WiFiClient sseClient;
+bool sseConnected = false;
+unsigned long sseLastPush = 0;
+const unsigned long SSE_PUSH_INTERVAL_MS = 1000;  // Push every 1 second
+const unsigned long SSE_KEEPALIVE_MS = 3000;       // Send keepalive comment every 3s
+unsigned long sseLastKeepalive = 0;
+
+bool initWiFi() {
+#if SENSEWARE_WIFI_AP
+    Serial.println("[WIFI] Starting Access Point...");
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(AP_SSID, AP_PASSWORD);
+    delay(100);
+    Serial.printf("[WIFI] AP started — SSID: %s\n", AP_SSID);
+    Serial.printf("[WIFI] Connect your laptop/phone to '%s' (password: %s)\n", AP_SSID, AP_PASSWORD);
+    Serial.printf("[WIFI] Dashboard: http://%s:81/\n", WiFi.softAPIP().toString().c_str());
+    return true;
+#else
+    Serial.printf("[WIFI] Connecting to %s...\n", WIFI_SSID);
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+        delay(500);
+        Serial.print(".");
+        attempts++;
     }
-    void onDisconnect(BLEServer* pServer) override {
-        deviceConnected.store(false);
-        if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-            Serial.println("[BLE] Device disconnected");
+    
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.printf("\n[WIFI] Connected! IP: %s\n", WiFi.localIP().toString().c_str());
+        return true;
+    }
+    
+    Serial.println("\n[WIFI] Connection failed.");
+    return false;
+#endif
+}
+
+// Start HTTP + SSE server on port 81
+void startHttpServer() {
+    httpServer.begin();
+#if SENSEWARE_WIFI_AP
+    String ip = WiFi.softAPIP().toString();
+#else
+    String ip = WiFi.localIP().toString();
+#endif
+    if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        Serial.printf("[HTTP] Server started — http://%s:81/events\n", ip.c_str());
+        xSemaphoreGive(gSerialMutex);
+    }
+}
+
+// HTTP request counter (for debug)
+static int sHttpRequestCount = 0;
+
+// =====================================================================
+// HTTP/SSE TASK — dedicated FreeRTOS task for HTTP server + SSE push
+// Runs on Core 1 with diagnostic logging for push-level debugging.
+// =====================================================================
+void httpTask(void* pvParameters) {
+    if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        Serial.println("[HTTP] Task started on core " + String(xPortGetCoreID()));
+        xSemaphoreGive(gSerialMutex);
+    }
+
+    static int ssePushCount = 0;  // diagnostic: how many SSE pushes sent
+
+    for (;;) {
+        WiFiClient client = httpServer.available();
+
+        if (!client) {
+            // No new client — handle SSE push on existing connection
+            if (sseConnected && millis() - sseLastPush >= SSE_PUSH_INTERVAL_MS) {
+                if (sseClient && sseClient.connected()) {
+                    char buf[280];
+                    snprintf(buf, sizeof(buf),
+                        "data: {\"hr\":%.1f,\"spo2\":%.1f,\"emg\":%.2f,\"mot\":%.3f,\"mse\":%.6f,\"acc\":%.1f,\"anomaly\":%d}\n\n",
+                        gState.heart_rate, gState.spo2, gState.emg_envelope,
+                        gState.motion_magnitude, gLastMse, gAccuracyPercent,
+                        gAnomalyDetected.load() ? 1 : 0);
+
+                    size_t written = sseClient.print(buf);
+                    ssePushCount++;
+
+                    if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+                        Serial.printf("[SSE] Push #%d (%d bytes) client=%s\n",
+                            ssePushCount, written,
+                            sseClient.connected() ? "OK" : "DEAD");
+                        xSemaphoreGive(gSerialMutex);
+                    }
+                } else {
+                    // Client went away
+                    sseConnected = false;
+                    ssePushCount = 0;
+                    if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+                        Serial.println("[SSE] Client lost (connected()=false)");
+                        xSemaphoreGive(gSerialMutex);
+                    }
+                }
+                sseLastPush = millis();
+            }
+
+            // SSE keepalive comment (SSE spec: lines starting with : are ignored)
+            // Only fires if no data push has happened within the keepalive window
+            if (sseConnected && millis() - sseLastKeepalive >= SSE_KEEPALIVE_MS) {
+                if (sseClient && sseClient.connected()) {
+                    sseClient.println(": keepalive");
+                    sseClient.flush();
+                }
+                sseLastKeepalive = millis();
+            }
+
+            vTaskDelay(pdMS_TO_TICKS(10));
+            continue;
+        }
+
+        // Guard: skip if this is our existing SSE client being returned by available()
+        if (sseClient && sseConnected) {
+            if (client.remoteIP() == sseClient.remoteIP() &&
+                client.remotePort() == sseClient.remotePort()) {
+                while (client.available()) client.read();
+                continue;
+            }
+        }
+
+        sHttpRequestCount++;
+        client.setTimeout(2000);
+
+        // Read request headers
+        unsigned long start = millis();
+        String requestLine = "";
+        while (millis() - start < 500) {
+            if (client.available()) {
+                char c = client.read();
+                requestLine += c;
+                if (requestLine.endsWith("\r\n\r\n") || requestLine.endsWith("\n\n")) break;
+                if (requestLine.length() > 512) break;
+            }
+        }
+
+        int firstLineEnd = requestLine.indexOf('\n');
+        String firstLine = (firstLineEnd > 0) ? requestLine.substring(0, firstLineEnd) : requestLine;
+        firstLine.trim();
+
+        if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+            Serial.printf("[HTTP] #%d from %s:%d — %s\n",
+                sHttpRequestCount,
+                client.remoteIP().toString().c_str(),
+                client.remotePort(),
+                firstLine.c_str());
             xSemaphoreGive(gSerialMutex);
         }
-    }
-};
 
-// BLE Characteristic Callbacks — detect notify failures via onStatus
-// notify() returns void — the only way to detect failures is this callback.
-class TelemetryCharCallbacks : public BLECharacteristicCallbacks {
-    void onStatus(BLECharacteristic *pChar, Status s, uint32_t code) override {
-        if (s == ERROR_GATT) {
-            if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                Serial.printf("[BLE] Telemetry notify FAILED: 0x%04x\n", code);
-                xSemaphoreGive(gSerialMutex);
+        // Route: /events (SSE)
+        if (requestLine.indexOf("GET /events") != -1) {
+            if (sseClient && sseClient.connected()) {
+                sseClient.stop();
             }
-        } else if (s == ERROR_NOTIFY_DISABLED) {
-            if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                Serial.println("[BLE] Telemetry: client disabled notifications");
-                xSemaphoreGive(gSerialMutex);
-            }
-        }
-    }
-};
+            ssePushCount = 0;
 
-class AlertCharCallbacks : public BLECharacteristicCallbacks {
-    void onStatus(BLECharacteristic *pChar, Status s, uint32_t code) override {
-        if (s == ERROR_GATT) {
-            if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                Serial.printf("[BLE] Alert notify FAILED: 0x%04x\n", code);
+            client.println("HTTP/1.1 200 OK");
+            client.println("Content-Type: text/event-stream");
+            client.println("Cache-Control: no-cache");
+            client.println("Connection: keep-alive");
+            client.println("Access-Control-Allow-Origin: *");
+            client.println();
+            client.flush();
+
+            sseClient = client;
+            sseConnected = true;
+            sseLastPush = millis();
+            sseLastKeepalive = millis();
+
+            if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+                Serial.printf("[SSE] Client connected from %s:%d\n",
+                    client.remoteIP().toString().c_str(), client.remotePort());
                 xSemaphoreGive(gSerialMutex);
             }
+            continue;  // DON'T stop the client — persistent SSE
         }
+
+        // Route: /telemetry (single-shot JSON)
+        if (requestLine.indexOf("GET /telemetry") != -1) {
+            char buf[256];
+            snprintf(buf, sizeof(buf),
+                "{\"hr\":%.1f,\"spo2\":%.1f,\"emg\":%.2f,\"mot\":%.3f,\"mse\":%.6f,\"acc\":%.1f,\"anomaly\":%d}",
+                gState.heart_rate, gState.spo2, gState.emg_envelope,
+                gState.motion_magnitude, gLastMse, gAccuracyPercent,
+                gAnomalyDetected.load() ? 1 : 0);
+            client.println("HTTP/1.1 200 OK");
+            client.println("Content-Type: application/json");
+            client.println("Access-Control-Allow-Origin: *");
+            client.println("Connection: close");
+            client.print("Content-Length: ");
+            client.println(strlen(buf));
+            client.println();
+            client.print(buf);
+            client.flush();
+        }
+        // Route: / (status page)
+        else if (requestLine.indexOf("GET / ") != -1 || requestLine.indexOf("GET /\r\n") != -1 || requestLine.indexOf("GET /\n") != -1) {
+            String ipStr;
+            #if SENSEWARE_WIFI_AP
+                ipStr = WiFi.softAPIP().toString();
+            #else
+                ipStr = WiFi.localIP().toString();
+            #endif
+            String body = "<html><body><h1>Senseware</h1>"
+                          "<p>SSE: <a href='/events'>/events</a></p>"
+                          "<p>JSON: <a href='/telemetry'>/telemetry</a></p>"
+                          "<p>IP: " + ipStr + ":81</p>"
+                          "</body></html>";
+            client.println("HTTP/1.1 200 OK");
+            client.println("Content-Type: text/html");
+            client.println("Access-Control-Allow-Origin: *");
+            client.println("Connection: close");
+            client.print("Content-Length: ");
+            client.println(body.length());
+            client.println();
+            client.print(body);
+            client.flush();
+        }
+        // OPTIONS
+        else if (requestLine.indexOf("OPTIONS") != -1) {
+            client.println("HTTP/1.1 204 No Content");
+            client.println("Access-Control-Allow-Origin: *");
+            client.println("Access-Control-Allow-Methods: GET, OPTIONS");
+            client.println("Access-Control-Allow-Headers: *");
+            client.println("Connection: close");
+            client.println();
+            client.flush();
+        }
+        // 404
+        else {
+            client.println("HTTP/1.1 404 Not Found");
+            client.println("Content-Type: text/plain");
+            client.println("Connection: close");
+            client.println();
+            client.print("Not Found");
+            client.flush();
+        }
+
+        client.stop();
     }
-};
+}
 
 // =====================================================================
 // FUNCTION DECLARATIONS
@@ -312,6 +529,7 @@ void sensorTask(void* pvParameters);
 void displayTask(void* pvParameters);
 void serialTask(void* pvParameters);
 void inferenceTask(void* pvParameters);
+void httpTask(void* pvParameters);
 
 // Demo-merged functions
 void startDoubleVibration();
@@ -330,7 +548,7 @@ void setup() {
     unsigned long serialStart = millis();
     while (!Serial && millis() - serialStart < 3000) { ; }
 
-    Serial.println("=== Senseware Phase 5 Boot ===");
+    Serial.println("=== Senseware Boot (WiFi+HTTP) ===");
 
     // --- I2C Bus ---
     pinMode(I2C_SDA, INPUT_PULLUP);
@@ -515,39 +733,37 @@ void setup() {
         1   // Core 1 — 0.5 Hz inference
     );
 
-    // --- BLE GATT Server (Phase 5) ---
-    Serial.setDebugOutput(true);  // Enable verbose BLE stack logging
-    BLEDevice::init("Senseware");
-    pServer = BLEDevice::createServer();
-    pServer->setCallbacks(new ServerCallbacks());
+    // --- WiFi + HTTP server (non-blocking — continues without WiFi on failure) ---
+    if (initWiFi()) {
+        startHttpServer();
+        // Show IP on OLED so user knows where to connect
+        display.clearDisplay();
+        display.setTextSize(1);
+        display.setTextColor(SH110X_WHITE);
+        display.setCursor(0, 0);
+        display.print("WiFi OK");
+        display.setCursor(0, 10);
+#if SENSEWARE_WIFI_AP
+        display.print(WiFi.softAPIP());
+#else
+        display.print(WiFi.localIP());
+#endif
+        display.setCursor(0, 20);
+        display.print("/events");
+        display.display();
+        delay(2000);  // Show IP for 2 seconds before normal display takes over
 
-    BLEService *pService = pServer->createService(SERVICE_UUID);
-
-    pTelemetryChar = pService->createCharacteristic(
-        TELEMETRY_CHAR_UUID,
-        BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_READ
-    );
-    pTelemetryChar->setCallbacks(new TelemetryCharCallbacks());
-    {
-        BLE2902* pDesc2902 = new BLE2902();
-        pDesc2902->setNotifications(true);
-        pTelemetryChar->addDescriptor(pDesc2902);
+        // HTTP/SSE server task on Core 1
+        xTaskCreatePinnedToCore(
+            httpTask,
+            "HTTP Task",
+            HTTP_TASK_STACK,
+            NULL,
+            2,   // priority 2 — higher than display/serial, lower than EMG
+            NULL,
+            1    // Core 1
+        );
     }
-
-    pAlertChar = pService->createCharacteristic(
-        ALERT_CHAR_UUID,
-        BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_READ
-    );
-    pAlertChar->setCallbacks(new AlertCharCallbacks());
-    {
-        BLE2902* pDesc2902 = new BLE2902();
-        pDesc2902->setNotifications(true);
-        pAlertChar->addDescriptor(pDesc2902);
-    }
-
-    pService->start();
-    pServer->getAdvertising()->start();
-    Serial.println("BLE server started. Device: Senseware");
 
     // --- Ensure clean startup state (from demo) ---
     gVibrationSequenceActive = false;
@@ -559,7 +775,7 @@ void setup() {
     gPrevImuAnomaly = false;
     gContinuousAnomalyStartMs = 0;
 
-    Serial.println("=== Senseware Phase 5 Ready ===");
+    Serial.println("=== Senseware Ready ===");
 }
 
 // =====================================================================
@@ -569,7 +785,7 @@ void loop() {
     // Non-blocking double-pulse haptic timer (from demo)
     updateVibration();
 
-    vTaskDelay(pdMS_TO_TICKS(10));  // Yield to RTOS tasks
+    vTaskDelay(pdMS_TO_TICKS(10));
 }
 
 // =====================================================================
@@ -980,7 +1196,7 @@ void displayTask(void* pvParameters) {
 
         // Title
         display.setCursor(0, 0);
-        display.println("Senseware P5");
+        display.println("Senseware");
         display.drawLine(0, 10, 128, 10, SH110X_WHITE);
 
         // Heart rate + SpO2 (display raw — shows 0 when no finger)
@@ -1266,7 +1482,7 @@ void serialTask(void* pvParameters) {
         unsigned long ts = 0;
         bool alert = false;
 
-        // Snapshot under mutex — release before Serial/BLE operations
+        // Snapshot under mutex — release before Serial output
         if (xSemaphoreTake(gStateMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
             hr   = gState.heart_rate;
             spo2 = gState.spo2;
@@ -1284,41 +1500,6 @@ void serialTask(void* pvParameters) {
                 ts, hr, spo2, emg, mot, alert ? 1 : 0);
             xSemaphoreGive(gSerialMutex);
         }
-
-        // BLE telemetry notifications
-        if (deviceConnected.load()) {
-            uint8_t telemetry[16];
-            memcpy(telemetry,      &hr,   4);
-            memcpy(telemetry + 4,  &spo2, 4);
-            memcpy(telemetry + 8,  &emg,  4);
-            memcpy(telemetry + 12, &mot,  4);
-            pTelemetryChar->setValue(telemetry, 16);
-            pTelemetryChar->notify();
-            vTaskDelay(pdMS_TO_TICKS(20));  // Let the TX buffer flush before next notify
-
-            static int notifyCount = 0;
-            if (++notifyCount % 10 == 0) {
-                if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                    Serial.printf("[BLE] Notifications sent: %d\n", notifyCount);
-                    xSemaphoreGive(gSerialMutex);
-                }
-            }
-
-            uint8_t alertByte = alert ? 1 : 0;
-            pAlertChar->setValue(&alertByte, 1);
-            pAlertChar->notify();
-        }
-
-        // Handle BLE reconnection on disconnect (F-C4: atomic flags)
-        if (!deviceConnected.load() && oldDeviceConnected.load()) {
-            vTaskDelay(pdMS_TO_TICKS(500));  // small pause before restarting advertising
-            pServer->startAdvertising();
-            if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                Serial.println("BLE: Restarting advertising");
-                xSemaphoreGive(gSerialMutex);
-            }
-        }
-        oldDeviceConnected.store(deviceConnected.load());
 
         // 1 Hz -> 1000 ms period
         vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(1000));

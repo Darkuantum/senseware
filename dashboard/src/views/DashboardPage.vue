@@ -27,6 +27,7 @@
       <!-- Vitals Cards -->
       <section class="vitals-row">
         <VitalsCard
+          key="hr"
           label="Heart Rate"
           :value="heartRate"
           unit="BPM"
@@ -35,6 +36,7 @@
           :decimals="0"
         />
         <VitalsCard
+          key="spo2"
           label="SpO2"
           :value="spo2"
           unit="%"
@@ -43,6 +45,7 @@
           :decimals="1"
         />
         <VitalsCard
+          key="emg"
           label="EMG Tension"
           :value="emgEnvelope"
           unit="μV"
@@ -51,11 +54,12 @@
           :decimals="1"
         />
         <VitalsCard
+          key="mot"
           label="Motion"
           :value="motionMagnitude"
           unit="g"
           color="success"
-          icon-name="Navigation"
+          icon-name="Activity"
           :decimals="2"
         />
       </section>
@@ -69,7 +73,7 @@
 
     <!-- Footer -->
     <footer class="app-footer">
-      <p>Senseware Wearable System &middot; Web Bluetooth requires <strong>Chrome</strong> or <strong>Edge</strong> on <strong>HTTPS/localhost</strong></p>
+      <p>Senseware Wearable System &middot; Connects via <strong>HTTP</strong> to ESP32 on port 81</p>
     </footer>
   </div>
 </template>
@@ -81,9 +85,9 @@ import ConnectionPanel from '../components/ConnectionPanel.vue'
 import VitalsCard from '../components/VitalsCard.vue'
 import LiveChart from '../components/LiveChart.vue'
 import AlertLog from '../components/AlertLog.vue'
-import { useBluetooth } from '../composables/useBluetooth.js'
+import { useTelemetry } from '../composables/useTelemetry.js'
 
-const ble = useBluetooth()
+const ws = useTelemetry()
 
 const heartRate = ref(0)
 const spo2 = ref(0)
@@ -94,21 +98,23 @@ const unsubscribers = []
 
 onMounted(() => {
   unsubscribers.push(
-    ble.on('telemetry', ({ heartRate: hr, spo2: sp, emgEnvelope: emg, motionMagnitude: motion }) => {
-      heartRate.value = hr
-      spo2.value = sp
-      emgEnvelope.value = em
-      motionMagnitude.value = motion
+    ws.manager.on('telemetry', (data) => {
+      heartRate.value = (typeof data.hr === 'number' && isFinite(data.hr)) ? data.hr : 0
+      spo2.value = (typeof data.spo2 === 'number' && isFinite(data.spo2)) ? data.spo2 : 0
+      emgEnvelope.value = (typeof data.emg === 'number' && isFinite(data.emg)) ? data.emg : 0
+      motionMagnitude.value = (typeof data.mot === 'number' && isFinite(data.mot)) ? data.mot : 0
     })
   )
 
   // Reset values on disconnect
   unsubscribers.push(
-    ble.on('disconnected', () => {
-      heartRate.value = 0
-      spo2.value = 0
-      emgEnvelope.value = 0
-      motionMagnitude.value = 0
+    ws.manager.on('stateChange', (newState) => {
+      if (newState === 'disconnected') {
+        heartRate.value = 0
+        spo2.value = 0
+        emgEnvelope.value = 0
+        motionMagnitude.value = 0
+      }
     })
   )
 })

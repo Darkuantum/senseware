@@ -52,9 +52,9 @@
 <script setup>
 import { ref, nextTick, onMounted, onUnmounted } from 'vue'
 import { AlertTriangle, Clock, ShieldCheck } from 'lucide-vue-next'
-import { useBluetooth } from '../composables/useBluetooth.js'
+import { useTelemetry } from '../composables/useTelemetry.js'
 
-const ble = useBluetooth()
+const ws = useTelemetry()
 
 const alerts = ref([])
 const logContainer = ref(null)
@@ -63,18 +63,18 @@ let unsubscribers = []
 
 onMounted(() => {
   unsubscribers.push(
-    ble.on('alert', ({ anomaly, timestamp, heartRate, emgEnvelope, motionMagnitude }) => {
-      if (!anomaly) return
+    ws.manager.on('alert', ({ alert, hr, emg, mot }) => {
+      if (!alert) return
 
-      const now = new Date(timestamp)
+      const now = new Date()
       const time = now.toLocaleTimeString('en-US', { hour12: false })
 
       alerts.value.push({
         id: ++alertCounter,
         time,
-        heartRate,
-        emgEnvelope,
-        motionMagnitude,
+        heartRate: hr,
+        emgEnvelope: emg,
+        motionMagnitude: mot,
       })
 
       // Keep only the last 200 alerts

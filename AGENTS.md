@@ -60,19 +60,21 @@
 
 ---
 
-## Phase 5: BLE Communication (Gateway Setup)
-**Goal:** Transmit telemetry and intervention alerts without maintaining a power-hungry Wi-Fi connection.
+## Phase 5: WiFi Communication (HTTP + SSE)
+**Goal:** Transmit telemetry and intervention alerts without maintaining a power-hungry Wi-Fi connection beyond the persistent SSE stream.
 
-1. **GATT Server Setup:** Utilize the ESP32's native BLE libraries (`BLEDevice`, `BLEServer`) to instantiate a server.
-2. **Characteristics:** Define two BLE Characteristics:
-   - **Telemetry (Notify):** Pushes periodic HR and EMG updates.
-   - **Alert (Notify):** Remains idle until Phase 4 detects an anomaly, then immediately pushes an alert payload.
+1. **HTTP Server:** Utilize the ESP32's native WiFi library to start an HTTP server on port 81.
+2. **SSE Endpoint:** Implement a `GET /events` route that holds a persistent HTTP connection and pushes JSON telemetry every 1 second using the Server-Sent Events protocol.
+3. **Payload:** Push a 16-byte JSON payload per tick: `{"hr":72.0,"spo2":98.0,"emg":50.0,"mot":1.03,"mse":0.0005,"acc":95.0,"anomaly":0}`.
+4. **Keepalive:** Send SSE comment lines (`: keepalive`) every 3 seconds to prevent connection timeout.
+5. **REST Endpoint:** Provide a `GET /telemetry` single-shot JSON endpoint for on-demand queries.
 
 ---
 
-## Phase 6: Caregiver Dashboard
-**Goal:** Visualize the live data and log interventions remotely.
+## Phase 6: Caregiver Dashboard (Vue.js)
+**Goal:** Visualize live data and log interventions remotely via any modern browser.
 
-1. **Web App Construction:** Build a lightweight dashboard (e.g., React or Vue) utilizing the Web Bluetooth API to connect directly to the ESP32 from a standard Chrome browser.
-2. **Visualization:** Subscribe to the BLE characteristics to chart the physiological data streams in real-time and maintain a log of triggered interventions.
-   - **BLE Telemetry Payload:** 16 bytes packed as 4 floats: HR, SpO2, EMG envelope, Motion magnitude.
+1. **Web App Construction:** Build a Vue 3 dashboard using Vite, connecting to the ESP32 via the EventSource (SSE) API.
+2. **Real-Time Visualization:** Subscribe to the SSE `/events` stream to chart physiological data (HR, SpO2, EMG, Motion) on a rolling Chart.js graph with separate y-axes.
+3. **Alert System:** Rising-edge detection on the `anomaly` field triggers caregiver alerts and logs intervention events with timestamps.
+4. **Connection Resilience:** Debounced reconnect logic prevents UI flicker during brief network blips. Silent reconnection within a 2-second window.

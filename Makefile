@@ -3,7 +3,7 @@ CLI    := $(shell which arduino-cli 2>/dev/null || echo "./bin/arduino-cli")
 SKETCH := senseware_code/senseware_code.ino
 PORT   := $(shell ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null | head -1)
 
-# Phase 5 (BLE) exceeds the default 1.2MB partition — use huge_app (3MB, no OTA)
+# huge_app partition (3MB, no OTA) for WiFi+SSE firmware
 PART_FLAGS := --build-property build.partitions=huge_app --build-property upload.maximum_size=3145728
 
 .PHONY: compile upload monitor clean

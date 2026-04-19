@@ -15,7 +15,7 @@ Autonomous, edge-AI physiological monitoring wearable built on the **DFRobot Fir
 
 ## Architecture
 
-The firmware runs a FreeRTOS-based data pipeline that synchronizes sensor streams into a unified state struct. An on-device autoencoder (TFLite Micro) performs real-time allostatic load anomaly detection, triggering closed-loop haptic interventions when stress spikes are detected. Telemetry and alerts are broadcast over BLE to a caregiver dashboard via Web Bluetooth.
+The firmware runs a FreeRTOS-based data pipeline that synchronizes sensor streams into a unified state struct. An on-device autoencoder (TFLite Micro) performs real-time allostatic load anomaly detection, triggering closed-loop haptic interventions when stress spikes are detected. Telemetry and alerts are pushed over WiFi via HTTP Server-Sent Events (SSE) to a caregiver dashboard built with Vue 3.
 
 ## Project Structure
 
@@ -26,7 +26,7 @@ senseware/
 ├── EMG_Filter/              # EMG signal processing library
 │   └── EMGFilters/
 ├── python/                  # Data collection & model training scripts
-├── dashboard/               # Caregiver web dashboard (BLE)
+├── dashboard/               # Caregiver web dashboard (Vue 3 + SSE)
 ├── models/                  # Trained TFLite models (gitignored)
 └── AGENTS.md                # Full phased implementation plan
 ```
@@ -38,7 +38,7 @@ senseware/
 2. **Baseline Logging** -- CSV data capture for model training
 3. **Model Training** -- Autoencoder (Keras) -> TFLite C header
 4. **Edge AI** -- On-device inference + haptic closed loop
-5. **BLE** -- GATT telemetry & alert characteristics
-6. **Dashboard** -- Web Bluetooth caregiver UI
+5. **WiFi + SSE** -- HTTP Server-Sent Events telemetry & keepalive
+6. **Dashboard** -- Vue 3 caregiver UI (Chart.js, rising-edge alerts)
 
 See [AGENTS.md](AGENTS.md) for the complete implementation plan.

@@ -3,7 +3,10 @@
     <div class="card-top-bar" />
     <div class="card-header">
       <div class="card-icon-wrap">
-        <component :is="iconComponent" :size="18" />
+        <Heart v-if="iconName === 'Heart'" :size="18" />
+        <Droplets v-else-if="iconName === 'Droplets'" :size="18" />
+        <Zap v-else-if="iconName === 'Zap'" :size="18" />
+        <Activity v-else :size="18" />
       </div>
       <span class="card-label">{{ label }}</span>
     </div>
@@ -12,19 +15,20 @@
       <span class="card-unit">{{ unit }}</span>
     </div>
     <div v-if="showTrend" class="card-trend" :class="trendDirection">
-      <component :is="trendArrowIcon" :size="14" />
+      <TrendingUp v-if="trendValue >= 0" :size="14" />
+      <TrendingDown v-else :size="14" />
       {{ Math.abs(trendValue).toFixed(1) }}
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed, ref, watch, onUnmounted, shallowRef, markRaw } from 'vue'
+import { computed, ref, watch, onUnmounted } from 'vue'
 import {
   Heart,
   Droplets,
   Zap,
-  Navigation,
+  Activity,
   TrendingUp,
   TrendingDown,
 } from 'lucide-vue-next'
@@ -38,14 +42,6 @@ const props = defineProps({
   decimals: { type: Number, default: 1 },
 })
 
-const iconMap = {
-  Heart: shallowRef(markRaw(Heart)),
-  Droplets: shallowRef(markRaw(Droplets)),
-  Zap: shallowRef(markRaw(Zap)),
-  Navigation: shallowRef(markRaw(Navigation)),
-}
-
-const iconComponent = computed(() => iconMap[props.iconName] || iconMap.Heart)
 const colorClass = computed(() => `card-${props.color}`)
 
 const displayValue = computed(() => {
@@ -79,10 +75,6 @@ onUnmounted(() => {
 
 const trendDirection = computed(() =>
   trendValue.value >= 0 ? 'trend-up' : 'trend-down'
-)
-
-const trendArrowIcon = computed(() =>
-  trendValue.value >= 0 ? shallowRef(markRaw(TrendingUp)) : shallowRef(markRaw(TrendingDown))
 )
 </script>
 
