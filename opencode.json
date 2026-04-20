@@ -58,7 +58,7 @@
       }
     },
     "dashboard": {
-      "description": "Web dashboard developer. Builds the caregiver Vue/React frontend using Web Bluetooth API to connect to the ESP32 BLE GATT server.",
+      "description": "Web dashboard developer. Builds the caregiver Vue 3 frontend using Server-Sent Events (SSE) to stream real-time telemetry from the ESP32 WiFi HTTP server.",
       "mode": "subagent",
       "temperature": 0.2,
       "permission": {

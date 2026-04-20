@@ -22,12 +22,8 @@
  *   - All audit fixes applied (atomic flags, stack sizes, alignment, etc.)
  *   - Merged demo behavior: windowed anomaly detection, double-pulse haptic,
  *     alert blink, dino animation, accuracy %, HR placeholder when no finger
- *   - WiFi + SSE server for remote telemetry (BLE removed)
+ *   - WiFi + SSE server for remote telemetry
  */
-
-// Prevent Bluedroid Classic Bluetooth init (OBEX/L2CAP crash)
-#define CONFIG_BT_NIMBLE_ENABLED 0
-#define CONFIG_BTDM_CTRL_MODE_BLE_ONLY 1
 
 // =====================================================================
 // INCLUDES
@@ -201,7 +197,6 @@ unsigned long gLastThresholdUpdate = 0;
 
 // =====================================================================
 // CROSS-CORE FLAGS (atomic, audit F-C4/F-W7)
-// Note: deviceConnected / oldDeviceConnected atomics removed (was BLE-only)
 std::atomic<bool> gAnomalyDetected{false};
 
 // HR polling mode — no interrupt flag needed (sensorTask polls every 4s)
