@@ -9,6 +9,9 @@
     "memory": {
       "type": "local",
       "command": ["npx", "-y", "@modelcontextprotocol/server-memory"],
+      "env": {
+        "MEMORY_FILE_PATH": "/home/drk/sutd/senseware/.opencode/memory.jsonl"
+      },
       "enabled": true
     }
   },

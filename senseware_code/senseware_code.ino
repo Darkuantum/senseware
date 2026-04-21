@@ -16,7 +16,7 @@
  *   - Replaced raw MAX30105 with DFRobot_BloodOxygen_S (real BPM/SpO2)
  *   - Replaced naive EMG rectifier with EMGFilters (proper 20-150Hz bandpass)
  *   - EMG sampling at exactly 1000Hz via vTaskDelayUntil
- *   - HR reads are interrupt-driven from SEN0344 INT pin
+ *   - HR reads via I2C polling at sensor's 4s update rate
  *   - Adaptive threshold with NVS persistence (Preferences)
  *   - Non-blocking haptic with cooldown
  *   - All audit fixes applied (atomic flags, stack sizes, alignment, etc.)
@@ -55,7 +55,7 @@
 // =====================================================================
 #define EMG_PIN       34   // Analog input for OYMotion EMG sensor
 #define VIB_PIN       25   // LRA vibration motor (LEDC PWM)
-#define HR_INT_PIN    4    // DFRobot SEN0344 interrupt output (active-low)
+const int HR_INT_PIN = 4;    // SEN0344 INT pin (unused — polling mode)
 
 #define I2C_SDA       21
 #define I2C_SCL       22
@@ -199,7 +199,7 @@ unsigned long gLastThresholdUpdate = 0;
 // CROSS-CORE FLAGS (atomic, audit F-C4/F-W7)
 std::atomic<bool> gAnomalyDetected{false};
 
-// HR polling mode — no interrupt flag needed (sensorTask polls every 4s)
+// HR polling at 4s interval — no interrupt needed (polling matches sensor update rate)
 
 // =====================================================================
 // EMG EMA smoothing
