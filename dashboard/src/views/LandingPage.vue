@@ -16,11 +16,14 @@
       </div>
 
       <nav class="hero-nav">
-        <router-link to="/" class="nav-brand">Senseware</router-link>
+        <router-link to="/" class="nav-brand">
+            <img src="/project_logo.png" alt="Senseware" class="nav-logo" />
+          </router-link>
         <div class="nav-links">
           <a href="#about">About</a>
           <a href="#how-it-works">How It Works</a>
           <a href="#tech">Technology</a>
+          <router-link to="/docs">Docs</router-link>
           <router-link to="/dashboard" class="nav-cta">Dashboard</router-link>
         </div>
       </nav>
@@ -107,7 +110,9 @@
         <div class="steps-grid">
           <div class="step-card reveal" v-for="(step, i) in steps" :key="i">
             <div class="step-icon-wrap" :class="step.colorClass">
-              <component :is="step.icon" :size="28" />
+              <Activity v-if="step.iconName === 'Activity'" :size="28" />
+              <Brain v-else-if="step.iconName === 'Brain'" :size="28" />
+              <Bell v-else :size="28" />
             </div>
             <div class="step-number">{{ String(i + 1).padStart(2, '0') }}</div>
             <h3 class="step-title">{{ step.title }}</h3>
@@ -131,7 +136,12 @@
 
         <div class="tech-grid">
           <div class="tech-card reveal" v-for="(tech, i) in techStack" :key="i">
-            <component :is="tech.icon" :size="24" class="tech-icon" />
+            <Cpu v-if="tech.iconName === 'Cpu'" :size="24" class="tech-icon" />
+            <Brain v-else-if="tech.iconName === 'Brain'" :size="24" class="tech-icon" />
+            <Wifi v-else-if="tech.iconName === 'Wifi'" :size="24" class="tech-icon" />
+            <Layers v-else-if="tech.iconName === 'Layers'" :size="24" class="tech-icon" />
+            <Clock v-else-if="tech.iconName === 'Clock'" :size="24" class="tech-icon" />
+            <Code2 v-else :size="24" class="tech-icon" />
             <h4 class="tech-name">{{ tech.name }}</h4>
             <p class="tech-desc">{{ tech.desc }}</p>
           </div>
@@ -168,6 +178,7 @@
         </div>
         <div class="footer-links">
           <router-link to="/dashboard">Dashboard</router-link>
+          <router-link to="/docs">Docs</router-link>
           <a href="#about">About</a>
           <a href="https://github.com" target="_blank" rel="noopener">GitHub</a>
         </div>
@@ -195,68 +206,69 @@ import {
   AlertTriangle,
 } from 'lucide-vue-next'
 
-// Steps data
+// Steps data — using iconName strings for v-if rendering
 const steps = [
   {
-    icon: Activity,
+    iconName: 'Activity',
     title: 'Sense',
     desc: 'Wearable sensors continuously monitor heart rate (PPG), muscle tension (EMG), and motion patterns (IMU) — all sampled at high frequency for clinical-grade fidelity.',
     colorClass: 'step-sense',
   },
   {
-    icon: Brain,
+    iconName: 'Brain',
     title: 'Detect',
     desc: 'A lightweight autoencoder running natively on the ESP32 learns your personal calm baseline. When physiological patterns deviate, it detects stress anomalies in real-time — no cloud needed.',
     colorClass: 'step-detect',
   },
   {
-    icon: Bell,
+    iconName: 'Bell',
     title: 'Alert',
     desc: 'Caregivers receive instant alerts on any phone or tablet via HTTP. The companion dashboard visualizes live vitals and logs every intervention, enabling data-informed care decisions.',
     colorClass: 'step-alert',
   },
 ]
 
-// Tech stack data
+// Tech stack data — using iconName strings for v-if rendering
 const techStack = [
   {
-    icon: Cpu,
+    iconName: 'Cpu',
     name: 'ESP32',
     desc: 'Low-power microcontroller running the entire ML pipeline at the edge',
   },
   {
-    icon: Brain,
+    iconName: 'Brain',
     name: 'TensorFlow Lite',
     desc: 'On-device autoencoder inference for real-time anomaly detection',
   },
   {
-    icon: Wifi,
+    iconName: 'Wifi',
     name: 'HTTP',
     desc: 'Real-time Server-Sent Events push from ESP32 — no app required',
   },
   {
-    icon: Layers,
+    iconName: 'Layers',
     name: 'Autoencoder ML',
     desc: 'Learns personal calm baselines and flags physiological deviations',
   },
   {
-    icon: Clock,
+    iconName: 'Clock',
     name: 'FreeRTOS',
     desc: 'Deterministic real-time OS for reliable sensor sampling',
   },
   {
-    icon: Code2,
+    iconName: 'Code2',
     name: 'Vue.js',
     desc: 'Lightweight reactive UI for the caregiver dashboard',
   },
 ]
 
-// Team placeholders
+// Team data — 5 real members
 const team = [
-  { name: 'Alex Chen', role: 'Embedded Systems', initials: 'AC', color: 'linear-gradient(135deg, #e8913a, #e85d4a)' },
-  { name: 'Sarah Lim', role: 'Machine Learning', initials: 'SL', color: 'linear-gradient(135deg, #5a9ec7, #b08adb)' },
-  { name: 'Jordan Ng', role: 'UX / Design', initials: 'JN', color: 'linear-gradient(135deg, #5ab88f, #5a9ec7)' },
-  { name: 'Priya Patel', role: 'Clinical Research', initials: 'PP', color: 'linear-gradient(135deg, #e8b13a, #e8913a)' },
+  { name: 'Alvin Teo', role: 'Embedded Systems', initials: 'AT', color: 'linear-gradient(135deg, #8B5CF6, #6366F1)' },
+  { name: 'Nathan Ly', role: 'Machine Learning', initials: 'NL', color: 'linear-gradient(135deg, #FDBA74, #F59E0B)' },
+  { name: 'Gurnoor Bedi', role: 'Signal Processing', initials: 'GB', color: 'linear-gradient(135deg, #10B981, #6366F1)' },
+  { name: 'Jennifer Wong', role: 'UX / Design', initials: 'JW', color: 'linear-gradient(135deg, #E0E7FF, #8B5CF6)' },
+  { name: 'Kaiwen Ong', role: 'Clinical Research', initials: 'KO', color: 'linear-gradient(135deg, #F59E0B, #EF4444)' },
 ]
 
 // ===== Scroll Reveal (IntersectionObserver) =====
@@ -292,6 +304,7 @@ onUnmounted(() => {
 /* ===== LANDING CONTAINER ===== */
 .landing {
   overflow-x: hidden;
+  overflow-y: auto;
 }
 
 /* ===== BROWSER COMPATIBILITY WARNING ===== */
@@ -300,9 +313,9 @@ onUnmounted(() => {
   align-items: center;
   gap: 0.5rem;
   padding: 0.7rem 1.5rem;
-  background: rgba(232, 93, 74, 0.12);
-  border-bottom: 1px solid rgba(232, 93, 74, 0.3);
-  color: #f0a09a;
+  background: rgba(255, 77, 106, 0.1);
+  border-bottom: 1px solid rgba(255, 77, 106, 0.2);
+  color: #FF4D6A;
   font-size: 0.82rem;
   line-height: 1.4;
   text-align: center;
@@ -312,7 +325,7 @@ onUnmounted(() => {
 }
 
 .compat-warning strong {
-  color: #f5f0eb;
+  color: #FF8FA3;
 }
 
 /* ===== HERO ===== */
@@ -326,7 +339,7 @@ onUnmounted(() => {
   text-align: center;
   padding: 2rem 1.5rem 3rem;
   overflow: hidden;
-  background: radial-gradient(ellipse at 50% 30%, #2d261f 0%, #1a1614 70%);
+  background: linear-gradient(180deg, #0B0914 0%, #1A1A2E 100%);
 }
 
 .hero-bg {
@@ -340,13 +353,13 @@ onUnmounted(() => {
   position: absolute;
   border-radius: 50%;
   filter: blur(80px);
-  opacity: 0.35;
+  opacity: 0.18;
 }
 
 .orb-1 {
   width: 400px;
   height: 400px;
-  background: radial-gradient(circle, rgba(232, 145, 58, 0.4), transparent 70%);
+  background: radial-gradient(circle, rgba(0, 229, 255, 0.25), transparent 70%);
   top: -100px;
   right: -100px;
   animation: drift-1 20s ease-in-out infinite;
@@ -355,7 +368,7 @@ onUnmounted(() => {
 .orb-2 {
   width: 300px;
   height: 300px;
-  background: radial-gradient(circle, rgba(90, 158, 199, 0.3), transparent 70%);
+  background: radial-gradient(circle, rgba(255, 0, 255, 0.2), transparent 70%);
   bottom: 10%;
   left: -80px;
   animation: drift-2 25s ease-in-out infinite;
@@ -364,7 +377,7 @@ onUnmounted(() => {
 .orb-3 {
   width: 250px;
   height: 250px;
-  background: radial-gradient(circle, rgba(176, 138, 219, 0.25), transparent 70%);
+  background: radial-gradient(circle, rgba(255, 122, 0, 0.2), transparent 70%);
   top: 40%;
   right: 15%;
   animation: drift-3 18s ease-in-out infinite;
@@ -373,7 +386,7 @@ onUnmounted(() => {
 .orb-4 {
   width: 200px;
   height: 200px;
-  background: radial-gradient(circle, rgba(232, 177, 58, 0.2), transparent 70%);
+  background: radial-gradient(circle, rgba(139, 92, 246, 0.3), transparent 70%);
   bottom: 30%;
   left: 30%;
   animation: drift-4 22s ease-in-out infinite;
@@ -412,13 +425,20 @@ onUnmounted(() => {
   justify-content: space-between;
   padding: 1.25rem 2rem;
   z-index: 10;
+  background: rgba(11, 9, 20, 0.7);
+  backdrop-filter: blur(12px);
 }
 
 .nav-brand {
-  font-size: 1.25rem;
-  font-weight: 700;
-  color: var(--text-primary);
-  letter-spacing: -0.02em;
+  display: flex;
+  align-items: center;
+  text-decoration: none;
+}
+
+.nav-logo {
+  height: 32px;
+  width: auto;
+  object-fit: contain;
 }
 
 .nav-links {
@@ -439,16 +459,17 @@ onUnmounted(() => {
 }
 
 .nav-cta {
-  background: var(--accent);
-  color: var(--bg-primary) !important;
+  background: var(--accent) !important;
+  color: #fff !important;
   padding: 0.45rem 1rem;
   border-radius: var(--radius-sm);
   font-weight: 600 !important;
-  transition: background var(--transition-fast);
+  transition: background var(--transition-fast) !important;
 }
 
 .nav-cta:hover {
   background: var(--accent-hover) !important;
+  color: #fff !important;
 }
 
 /* Hero content */
@@ -461,8 +482,8 @@ onUnmounted(() => {
   display: inline-block;
   padding: 0.35rem 1rem;
   border-radius: 100px;
-  border: 1px solid var(--border);
-  background: var(--card-bg);
+  border: 1px solid var(--accent);
+  background: rgba(139, 92, 246, 0.1);
   color: var(--accent);
   font-size: 0.78rem;
   font-weight: 600;
@@ -480,7 +501,7 @@ onUnmounted(() => {
 }
 
 .gradient-text {
-  background: linear-gradient(135deg, #e8b13a 0%, #e8913a 40%, #e85d4a 100%);
+  background: linear-gradient(135deg, #00E5FF 0%, #FF00FF 50%, #8B5CF6 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -489,14 +510,14 @@ onUnmounted(() => {
 .hero-subtitle {
   font-size: clamp(1.05rem, 2.5vw, 1.35rem);
   font-weight: 500;
-  color: var(--text-secondary);
+  color: var(--accent);
   margin-bottom: 1rem;
 }
 
 .hero-tagline {
   font-size: 1rem;
   line-height: 1.7;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   max-width: 540px;
   margin: 0 auto 2rem;
 }
@@ -526,25 +547,27 @@ onUnmounted(() => {
 
 .btn-primary {
   background: var(--accent);
-  color: var(--bg-primary);
+  color: #fff;
 }
 
 .btn-primary:hover {
   background: var(--accent-hover);
   transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(232, 145, 58, 0.3);
+  box-shadow: 0 8px 24px rgba(139, 92, 246, 0.3);
 }
 
 .btn-outline {
-  background: transparent;
-  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-hover);
   color: var(--text-secondary);
 }
 
 .btn-outline:hover {
-  border-color: var(--text-secondary);
+  border-color: var(--accent);
   color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.08);
   transform: translateY(-2px);
+  box-shadow: 0 4px 20px rgba(139, 92, 246, 0.3);
 }
 
 /* Scroll hint */
@@ -589,6 +612,7 @@ onUnmounted(() => {
   letter-spacing: -0.02em;
   line-height: 1.2;
   margin-bottom: 1rem;
+  color: var(--text-primary);
 }
 
 .section-desc {
@@ -672,7 +696,7 @@ onUnmounted(() => {
 
 .step-sense::before { background: var(--color-danger); }
 .step-detect::before { background: var(--color-info); }
-.step-alert::before { background: var(--color-warning); }
+.step-alert::before { background: var(--accent-orange); }
 
 .step-card:hover {
   transform: translateY(-4px);
@@ -695,18 +719,18 @@ onUnmounted(() => {
 }
 
 .step-sense .step-icon-wrap {
-  background: rgba(232, 93, 74, 0.12);
+  background: rgba(255, 77, 106, 0.12);
   color: var(--color-danger);
 }
 
 .step-detect .step-icon-wrap {
-  background: rgba(90, 158, 199, 0.12);
+  background: rgba(0, 229, 255, 0.1);
   color: var(--color-info);
 }
 
 .step-alert .step-icon-wrap {
-  background: rgba(232, 177, 58, 0.12);
-  color: var(--color-warning);
+  background: rgba(255, 122, 0, 0.12);
+  color: var(--accent-orange);
 }
 
 .step-number {
@@ -723,6 +747,7 @@ onUnmounted(() => {
   font-weight: 700;
   margin-bottom: 0.75rem;
   letter-spacing: -0.01em;
+  color: var(--text-primary);
 }
 
 .step-desc {
@@ -754,6 +779,7 @@ onUnmounted(() => {
 .tech-card:hover {
   border-color: var(--border-hover);
   transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
 }
 
 .tech-icon {
@@ -765,6 +791,7 @@ onUnmounted(() => {
   font-size: 0.95rem;
   font-weight: 600;
   margin-bottom: 0.35rem;
+  color: var(--text-primary);
 }
 
 .tech-desc {
@@ -775,12 +802,12 @@ onUnmounted(() => {
 
 /* ===== TEAM ===== */
 .team-section {
-  background: var(--bg-primary);
+  background: linear-gradient(180deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
 }
 
 .team-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 1.5rem;
   margin-top: 3rem;
 }
@@ -800,7 +827,7 @@ onUnmounted(() => {
   margin: 0 auto 1rem;
   font-size: 1.1rem;
   font-weight: 700;
-  color: var(--bg-primary);
+  color: #fff;
   letter-spacing: 1px;
 }
 
@@ -808,6 +835,7 @@ onUnmounted(() => {
   font-size: 0.95rem;
   font-weight: 600;
   margin-bottom: 0.25rem;
+  color: var(--text-primary);
 }
 
 .team-role {
@@ -819,6 +847,7 @@ onUnmounted(() => {
 .landing-footer {
   border-top: 1px solid var(--border);
   padding: 3rem 1.5rem;
+  background: var(--card-bg);
 }
 
 .footer-inner {
@@ -912,6 +941,10 @@ onUnmounted(() => {
   transition-delay: 0.3s;
 }
 
+.team-grid .reveal:nth-child(5) {
+  transition-delay: 0.4s;
+}
+
 /* ===== RESPONSIVE ===== */
 @media (max-width: 900px) {
   .about-grid {
@@ -928,7 +961,7 @@ onUnmounted(() => {
   }
 
   .team-grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(3, 1fr);
   }
 }
 

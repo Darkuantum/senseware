@@ -1,4 +1,4 @@
-FQBN   := esp32:esp32:firebeetle32
+FQBN   := esp32:esp32:esp32
 CLI    := $(shell which arduino-cli 2>/dev/null || echo "./bin/arduino-cli")
 SKETCH := senseware_code/senseware_code.ino
 PORT   := $(shell ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null | head -1)

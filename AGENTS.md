@@ -1,7 +1,7 @@
 # AGENTS.md: Senseware Implementation Plan
 
 ## System Directive
-**Target Hardware:** DFRobot FireBeetle 2 ESP32-E (esp32:esp32:firebeetle32)
+**Target Hardware:** YD-ESP32 Type-A (ESP32-WROOM-32, FQBN: esp32:esp32:esp32)
 **Core Components:** MAX30102 (PPG), MPU-9250 (IMU), OYMotion Analog EMG, SH1106 OLED, LRA Vibration Motor.
 **Objective:** Execute the staged development of an autonomous, edge-AI physiological monitoring wearable.
 
@@ -17,7 +17,7 @@
    - `"MPU9250"`
    - `"Adafruit SH110X"`
    - `"Adafruit NeoPixel"`
-4. **Hardware Handshake:** The human user will execute `usbipd` on the Windows host to bind the FireBeetle's serial port to WSL. The agent must verify the device presence (e.g., via `lsusb` or checking `/dev/ttyUSB*` / `/dev/ttyACM*`) prior to executing compile and upload commands.
+4. **Hardware Handshake:** The human user will execute `usbipd` on the Windows host to bind the ESP32 board's serial port to WSL. The agent must verify the device presence (e.g., via `lsusb` or checking `/dev/ttyUSB*` / `/dev/ttyACM*`) prior to executing compile and upload commands.
 
 ---
 
@@ -53,7 +53,8 @@
 **Goal:** Run the trained model natively on the ESP32 to trigger closed-loop haptic interventions.
 
 1. **Library Integration:** Install and include the `Chirale_TensorFlowLite` library (TFLite Micro C++ API). Import the `.tflite` model header.
-   - **Heart Rate:** Uses the official DFRobot_BloodOxygen_S library with INT pin (GPIO 4) for interrupt-driven heart rate reads.
+   - **Heart Rate:** Uses the SparkFun MAX30105 library with heartRate.h for software beat detection at 25Hz polling rate. SpO2 computed from red/IR DC ratio (Maxim AN6407 formula).
+   - Note: The DFRobot SEN0344 module and DFRobot_BloodOxygen_S library were replaced with a bare MAX30102 chip driven directly by the SparkFun MAX3010x library. The DFRobot module's internal MCU was not reliably driving the PPG LED when co-located with other I2C devices.
 2. **Inference Task:** Create a new FreeRTOS task. At set intervals, this task normalizes the latest Phase 1 data struct, feeds it into the autoencoder, and calculates the reconstruction error.
    - **Adaptive Threshold:** The system learns the user's baseline reconstruction error over time, continuously adjusting the anomaly detection threshold.
 3. **Closed-Loop Trigger:** If the reconstruction error exceeds the established threshold, trigger the native ESP32 v3.x `ledcWrite()` functions to fire the haptic motor (GPIO 25) and update the OLED with an intervention prompt.

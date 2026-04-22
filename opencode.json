@@ -37,7 +37,7 @@
       }
     },
     "firmware": {
-      "description": "ESP32 firmware engineer. Handles Arduino/C++ code for FreeRTOS tasks, sensor integration, I2C peripherals, and Edge AI inference on the FireBeetle 2.",
+      "description": "ESP32 firmware engineer. Handles Arduino/C++ code for FreeRTOS tasks, sensor integration, I2C peripherals, and Edge AI inference on the YD-ESP32.",
       "mode": "subagent",
       "temperature": 0.1,
       "permission": {

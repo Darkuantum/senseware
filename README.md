@@ -1,12 +1,12 @@
 # senseware
 
-Autonomous, edge-AI physiological monitoring wearable built on the **DFRobot FireBeetle 2 ESP32-E**.
+Autonomous, edge-AI physiological monitoring wearable built on the **YD-ESP32 Type-A (ESP32-WROOM-32)**.
 
 ## Hardware
 
 | Component | Part |
 |---|---|
-| MCU | DFRobot FireBeetle 2 ESP32-E |
+| MCU | YD-ESP32 Type-A |
 | PPG Heart Rate | MAX30102 (I2C) |
 | IMU | MPU-9250 (I2C) |
 | EMG | OYMotion Analog EMG (ADC GPIO 34) |

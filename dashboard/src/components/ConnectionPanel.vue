@@ -149,7 +149,7 @@ function handleDisconnect() {
 .ip-input-group {
   display: inline-flex;
   align-items: center;
-  background: var(--bg-primary);
+  background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 0 0.6rem;
@@ -213,7 +213,7 @@ function handleDisconnect() {
 
 .btn-primary {
   background: var(--accent);
-  color: var(--bg-primary);
+  color: #fff;
 }
 
 .btn-primary:hover:not(:disabled) {
@@ -222,13 +222,13 @@ function handleDisconnect() {
 }
 
 .btn-danger {
-  background: rgba(232, 93, 74, 0.15);
+  background: rgba(255, 77, 106, 0.1);
   color: var(--color-danger);
-  border: 1px solid rgba(232, 93, 74, 0.3);
+  border: 1px solid rgba(255, 77, 106, 0.2);
 }
 
 .btn-danger:hover:not(:disabled) {
-  background: rgba(232, 93, 74, 0.25);
+  background: rgba(255, 77, 106, 0.18);
 }
 
 .btn-ghost {
@@ -266,7 +266,7 @@ function handleDisconnect() {
 }
 
 .status-badge.connected {
-  background: rgba(90, 184, 143, 0.15);
+  background: rgba(0, 229, 160, 0.1);
   color: var(--color-success);
 }
 
@@ -287,10 +287,10 @@ function handleDisconnect() {
 .warning {
   margin-top: 0.65rem;
   padding: 0.55rem 0.75rem;
-  background: rgba(232, 177, 58, 0.08);
+  background: rgba(255, 176, 32, 0.08);
   border-left: 3px solid var(--color-warning);
   border-radius: 4px;
-  color: #f0c85a;
+  color: #FFB020;
   font-size: 0.8rem;
   line-height: 1.4;
   display: flex;
@@ -301,15 +301,16 @@ function handleDisconnect() {
 .warning-icon {
   flex-shrink: 0;
   margin-top: 1px;
+  color: var(--color-warning);
 }
 
 .error {
   margin-top: 0.5rem;
   padding: 0.45rem 0.7rem;
-  background: rgba(232, 93, 74, 0.08);
+  background: rgba(255, 77, 106, 0.06);
   border-left: 3px solid var(--color-danger);
   border-radius: 4px;
-  color: #f0a09a;
+  color: #FF4D6A;
   font-size: 0.78rem;
   font-family: var(--mono);
 }
@@ -319,8 +320,8 @@ function handleDisconnect() {
   display: inline-block;
   width: 14px;
   height: 14px;
-  border: 2px solid rgba(0, 0, 0, 0.2);
-  border-top-color: var(--bg-primary);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #fff;
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
 }

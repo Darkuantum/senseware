@@ -5,7 +5,7 @@
       <div class="header-content">
         <div class="header-left">
           <router-link to="/" class="brand-link">
-            <Activity :size="20" class="brand-icon" />
+            <img src="/project_logo.png" alt="Senseware" class="brand-logo" />
             <div>
               <h1 class="brand-title">Senseware</h1>
               <p class="brand-subtitle">Caregiver Monitor</p>
@@ -80,7 +80,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
-import { Activity, Home } from 'lucide-vue-next'
+import { Home } from 'lucide-vue-next'
 import ConnectionPanel from '../components/ConnectionPanel.vue'
 import VitalsCard from '../components/VitalsCard.vue'
 import LiveChart from '../components/LiveChart.vue'
@@ -128,12 +128,13 @@ onUnmounted(() => {
 .app-shell {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  height: 100%;
+  overflow-y: auto;
 }
 
 /* Header */
 .app-header {
-  background: var(--bg-secondary);
+  background: rgba(11, 9, 20, 0.85);
   border-bottom: 1px solid var(--border);
   padding: 0.75rem 1.5rem;
   position: sticky;
@@ -170,8 +171,11 @@ onUnmounted(() => {
   color: inherit;
 }
 
-.brand-icon {
-  color: var(--accent);
+.brand-logo {
+  height: 28px;
+  width: auto;
+  object-fit: contain;
+  margin-right: 0.5rem;
 }
 
 .brand-title {
@@ -202,13 +206,14 @@ onUnmounted(() => {
   padding: 0.4rem 0.75rem;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
   transition: all var(--transition-fast);
 }
 
 .nav-home:hover {
   color: var(--text-primary);
   border-color: var(--border-hover);
-  background: var(--card-bg);
+  background: var(--card-bg-hover);
 }
 
 /* Main Content */

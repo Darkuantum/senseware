@@ -11,6 +11,7 @@
   "dependencies": {
     "chart.js": "^4.5.1",
     "lucide-vue-next": "^1.0.0",
+    "mermaid": "^11.14.0",
     "vue": "^3.5.32",
     "vue-chartjs": "^5.3.3",
     "vue-router": "^4.6.4"

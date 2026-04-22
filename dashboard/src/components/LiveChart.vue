@@ -136,8 +136,8 @@ const chartData = computed(() => {
       {
         label: 'Heart Rate (BPM)',
         data: [..._hrData],
-        borderColor: '#e85d4a',
-        backgroundColor: 'rgba(232, 93, 74, 0.08)',
+        borderColor: '#FF4D6A',
+        backgroundColor: 'rgba(255, 77, 106, 0.15)',
         fill: true,
         tension: 0.4,
         borderWidth: 2,
@@ -149,8 +149,8 @@ const chartData = computed(() => {
       {
         label: 'SpO2 (%)',
         data: [..._spo2Data],
-        borderColor: '#b08adb',
-        backgroundColor: 'rgba(176, 138, 219, 0.08)',
+        borderColor: '#9D4EDD',
+        backgroundColor: 'rgba(157, 78, 221, 0.15)',
         fill: true,
         tension: 0.4,
         borderWidth: 2,
@@ -162,8 +162,8 @@ const chartData = computed(() => {
       {
         label: 'EMG Envelope (μV)',
         data: [..._emgData],
-        borderColor: '#5a9ec7',
-        backgroundColor: 'rgba(90, 158, 199, 0.08)',
+        borderColor: '#00E5FF',
+        backgroundColor: 'rgba(0, 229, 255, 0.15)',
         fill: true,
         tension: 0.4,
         borderWidth: 2,
@@ -175,8 +175,8 @@ const chartData = computed(() => {
       {
         label: 'Motion (g)',
         data: [..._motionData],
-        borderColor: '#5ab88f',
-        backgroundColor: 'rgba(90, 184, 143, 0.08)',
+        borderColor: '#00E5A0',
+        backgroundColor: 'rgba(0, 229, 160, 0.15)',
         fill: true,
         tension: 0.4,
         borderWidth: 2,
@@ -205,7 +205,7 @@ const chartOptions = {
       display: true,
       position: 'bottom',
       labels: {
-        color: '#8a7b6b',
+        color: '#B0B0C8',
         font: { size: 11 },
         usePointStyle: true,
         pointStyle: 'circle',
@@ -213,10 +213,10 @@ const chartOptions = {
       },
     },
     tooltip: {
-      backgroundColor: 'rgba(26, 22, 20, 0.92)',
-      titleColor: '#f5f0eb',
-      bodyColor: '#b8a99a',
-      borderColor: '#3d342a',
+      backgroundColor: 'rgba(26, 22, 37, 0.95)',
+      titleColor: '#FFFFFF',
+      bodyColor: '#B0B0C8',
+      borderColor: 'rgba(255, 255, 255, 0.1)',
       borderWidth: 1,
       cornerRadius: 8,
       padding: 10,
@@ -234,11 +234,11 @@ const chartOptions = {
   scales: {
     x: {
       grid: {
-        color: 'rgba(61, 52, 42, 0.3)',
+        color: 'rgba(255, 255, 255, 0.06)',
         border: { display: false },
       },
       ticks: {
-        color: '#8a7b6b',
+        color: '#6B6B8A',
         font: { size: 10, family: 'monospace' },
         maxRotation: 0,
         maxTicksLimit: 8,
@@ -251,15 +251,15 @@ const chartOptions = {
       title: {
         display: true,
         text: 'BPM / SpO2',
-        color: '#e85d4a',
+        color: '#FF4D6A',
         font: { size: 11, weight: '600' },
       },
       grid: {
-        color: 'rgba(61, 52, 42, 0.3)',
+        color: 'rgba(255, 255, 255, 0.06)',
         border: { display: false },
       },
       ticks: {
-        color: '#8a7b6b',
+        color: '#6B6B8A',
         font: { size: 10, family: 'monospace' },
       },
       min: 40,
@@ -272,34 +272,20 @@ const chartOptions = {
       title: {
         display: true,
         text: 'EMG (μV)',
-        color: '#5a9ec7',
+        color: '#00E5FF',
         font: { size: 11, weight: '600' },
       },
       grid: {
         drawOnChartArea: false,
       },
       ticks: {
-        color: '#8a7b6b',
+        color: '#6B6B8A',
         font: { size: 10, family: 'monospace' },
       },
     },
     y2: {
       type: 'linear',
-      display: true,
-      position: 'right',
-      title: {
-        display: true,
-        text: 'Motion (g)',
-        color: '#5ab88f',
-        font: { size: 11, weight: '600' },
-      },
-      grid: {
-        drawOnChartArea: false,
-      },
-      ticks: {
-        color: '#8a7b6b',
-        font: { size: 10, family: 'monospace' },
-      },
+      display: false,
       min: 0,
       suggestedMax: 3,
     },
@@ -341,16 +327,18 @@ const chartOptions = {
 }
 
 .chart-placeholder {
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 100%;
   color: var(--text-muted);
+  pointer-events: none;
 }
 
 .placeholder-icon {
-  color: var(--border-hover);
+  color: var(--text-muted);
   margin-bottom: 0.75rem;
   opacity: 0.6;
 }

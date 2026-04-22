@@ -138,7 +138,7 @@ function clearAlerts() {
   height: 22px;
   padding: 0 6px;
   border-radius: 11px;
-  background: rgba(232, 93, 74, 0.2);
+  background: rgba(255, 77, 106, 0.12);
   color: var(--color-danger);
   font-size: 0.72rem;
   font-weight: 700;
@@ -156,7 +156,7 @@ function clearAlerts() {
 }
 
 .btn-clear:hover {
-  background: var(--border);
+  background: rgba(255, 255, 255, 0.08);
   color: var(--text-primary);
 }
 
@@ -209,7 +209,7 @@ function clearAlerts() {
   padding: 0.6rem 0.75rem;
   margin-bottom: 0.4rem;
   border-radius: var(--radius-sm);
-  background: rgba(232, 93, 74, 0.05);
+  background: rgba(255, 77, 106, 0.06);
   border-left: 3px solid var(--color-danger);
   display: flex;
   flex-direction: column;
@@ -232,7 +232,7 @@ function clearAlerts() {
 .alert-message {
   font-size: 0.85rem;
   font-weight: 600;
-  color: #f0a09a;
+  color: #FF4D6A;
   display: flex;
   align-items: center;
   gap: 0.3rem;

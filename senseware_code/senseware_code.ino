@@ -1,9 +1,9 @@
 /*
  * Senseware Firmware — Phase 5 (MAJOR REWRITE)
- * Target: DFRobot FireBeetle 2 ESP32-E (esp32:esp32:firebeetle32)
+ * Target: ESP32-WROOM-32 (YD-ESP32 Type-A, FQBN esp32:esp32:esp32)
  *
  * Sensors:
- *   DFRobot SEN0344 Blood Oxygen (HR + SpO2) via DFRobot_BloodOxygen_S
+ *   MAX30102 PPG (HR + SpO2) via SparkFun MAX30105.h + heartRate.h
  *   MPU-9250 9-DOF IMU
  *   OYMotion Analog EMG with EMGFilters (1000 Hz bandpass)
  *   SH1106 OLED 128x64
@@ -13,15 +13,15 @@
  * WiFi: HTTP + SSE server for remote telemetry
  *
  * Major changes from prior version:
- *   - Replaced raw MAX30105 with DFRobot_BloodOxygen_S (real BPM/SpO2)
+ *   - Replaced DFRobot SEN0344/DFRobot_BloodOxygen_S with SparkFun MAX30105 (direct MAX30102 register access)
  *   - Replaced naive EMG rectifier with EMGFilters (proper 20-150Hz bandpass)
  *   - EMG sampling at exactly 1000Hz via vTaskDelayUntil
- *   - HR reads via I2C polling at sensor's 4s update rate
+ *   - HR reads via MAX30102 at 25Hz polling (SparkFun heartRate beat detection)
  *   - Adaptive threshold with NVS persistence (Preferences)
  *   - Non-blocking haptic with cooldown
  *   - All audit fixes applied (atomic flags, stack sizes, alignment, etc.)
  *   - Merged demo behavior: windowed anomaly detection, double-pulse haptic,
- *     alert blink, dino animation, accuracy %, HR placeholder when no finger
+ *     alert blink, dino animation, accuracy %
  *   - WiFi + SSE server for remote telemetry
  */
 
@@ -33,7 +33,8 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SH110X.h>
 #include "MPU9250.h"
-#include "DFRobot_BloodOxygen_S.h"
+#include "MAX30105.h"
+#include "heartRate.h"
 #include "EMGFilters.h"
 #include <Preferences.h>
 #include <atomic>
@@ -55,7 +56,7 @@
 // =====================================================================
 #define EMG_PIN       34   // Analog input for OYMotion EMG sensor
 #define VIB_PIN       25   // LRA vibration motor (LEDC PWM)
-const int HR_INT_PIN = 4;    // SEN0344 INT pin (unused — polling mode)
+
 
 #define I2C_SDA       21
 #define I2C_SCL       22
@@ -67,7 +68,7 @@ const int HR_INT_PIN = 4;    // SEN0344 INT pin (unused — polling mode)
 static void recoverI2C() {
     Wire.end();
     Wire.begin(I2C_SDA, I2C_SCL);
-    Wire.setClock(400000);
+    Wire.setClock(100000);
     // Toggle SCL a few times manually to clear stuck slaves
     pinMode(I2C_SCL, OUTPUT);
     for (int i = 0; i < 9; i++) {
@@ -77,7 +78,7 @@ static void recoverI2C() {
         delayMicroseconds(5);
     }
     Wire.begin(I2C_SDA, I2C_SCL);
-    Wire.setClock(400000);
+    Wire.setClock(100000);
 }
 
 // =====================================================================
@@ -148,7 +149,7 @@ const float NORM_STD[NUM_FEATURES]  = {1.0000f,  146.1824f, 0.0391f};
 // =====================================================================
 const int pwmFreq = 5000, pwmResolution = 8;
 
-DFRobot_BloodOxygen_S_I2C bloodOxygen(&Wire, 0x57);
+MAX30105 particleSensor;
 MPU9250 mpu;
 Adafruit_SH1106G display = Adafruit_SH1106G(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 EMGFilters emgFilter;
@@ -157,8 +158,8 @@ EMGFilters emgFilter;
 // PHYSIO STATE & SYNCHRONIZATION
 // =====================================================================
 struct PhysioState {
-    float heart_rate;        // Real BPM from DFRobot BloodOxygen_S library
-    float spo2;              // SpO2 % from DFRobot BloodOxygen_S library
+    float heart_rate;        // BPM from SparkFun heartRate.h (checkForBeat)
+    float spo2;              // SpO2 % from MAX30102 red/IR ratio (AN6407 formula)
     float emg_envelope;      // Properly filtered EMG squared envelope from EMGFilters
     float motion_magnitude;  // Accel magnitude from MPU-9250
     unsigned long timestamp; // millis() at last sensorTask update (authoritative)
@@ -199,7 +200,7 @@ unsigned long gLastThresholdUpdate = 0;
 // CROSS-CORE FLAGS (atomic, audit F-C4/F-W7)
 std::atomic<bool> gAnomalyDetected{false};
 
-// HR polling at 4s interval — no interrupt needed (polling matches sensor update rate)
+// HR: SparkFun heartRate checkForBeat() at 25Hz polling
 
 // =====================================================================
 // EMG EMA smoothing
@@ -213,6 +214,30 @@ static int sEmgCalThreshold = 0;  // Max rest noise (ADC²), set during calibrat
 // =====================================================================
 volatile int gEmgRawADC = 0;       // Raw analogRead value (0-4095)
 volatile int gEmgFiltered = 0;     // Output from emgFilter.update()
+
+// =====================================================================
+// HR / SpO2 TRACKING (SparkFun MAX30105)
+// =====================================================================
+
+// heartRate.h file-scope globals — exposed for beat-detector state reset
+// when IR drops to near-zero (finger removed). See heartRate.cpp lines 60-74.
+extern int16_t IR_AC_Max, IR_AC_Min;
+extern int16_t IR_AC_Signal_Current, IR_AC_Signal_Previous;
+extern int16_t IR_AC_Signal_min, IR_AC_Signal_max;
+extern int16_t IR_Average_Estimated;
+extern int16_t positiveEdge, negativeEdge;
+extern int32_t ir_avg_reg;
+extern uint8_t offset;
+extern int16_t cbuf[32];
+
+long gLastBeatMs = 0;
+float gHrBuffer[4] = {0};
+int gHrBufIdx = 0;
+float gSpo2EMA = 98.0f;
+float gRedDC = 0.0f;
+float gIrDC = 0.0f;
+const float SPO2_EMA_ALPHA = 0.05f;
+const float DC_EMA_ALPHA = 0.005f;
 
 // =====================================================================
 // ACCURACY PERCENTAGE + LAST MSE (from demo)
@@ -549,37 +574,42 @@ void setup() {
     pinMode(I2C_SDA, INPUT_PULLUP);
     pinMode(I2C_SCL, INPUT_PULLUP);
     Wire.begin(I2C_SDA, I2C_SCL);
-    Serial.println("I2C bus initialized.");
+    Wire.setClock(100000);  // 100kHz — more reliable with multiple devices on bus
+    Serial.println("I2C bus initialized (100kHz).");
+
+    // --- SparkFun MAX30105 (HR + SpO2) ---
+    delay(500);
+    Serial.println("Initializing MAX30105 (HR/SpO2)...");
+    if (!particleSensor.begin(Wire, I2C_SPEED_STANDARD)) {
+        Serial.println("MAX30105 not found on I2C. Halting.");
+        while (1) { delay(1000); }
+    }
+    Serial.println("MAX30105 found.");
+    Wire.begin(I2C_SDA, I2C_SCL);
+    Wire.setClock(100000);
+    // ADC range 16384 → 18-bit, max value ~262143. Required for our
+    // finger-present thresholds (IR>30000, Red>20000) to be reachable.
+    // Sample rate 400, pulse width 411µs (18-bit native), 4-sample averaging.
+    particleSensor.setup(0x1F, 4, 3, 400, 411, 16384);
+    // Boost IR for beat detection (checkForBeat runs on IR channel).
+    // Red for SpO2 (red/IR DC ratio). Both at 0xFF = ~50mA.
+    particleSensor.setPulseAmplitudeRed(0xA0);
+    particleSensor.setPulseAmplitudeIR(0xA0);
+    Serial.println("MAX30105 LEDs on (Red=0xA0, IR=0xA0, ADC=16384). Place finger to start.");
 
     // --- MPU-9250 ---
+    delay(200);  // Settle I2C bus before adding more devices
+    Wire.setClock(100000);
+    mpu.verbose(true);
     if (!mpu.setup(I2C_ADDR_MPU)) {
-        Serial.println("MPU connection failed. Halting.");
-        while (1) { delay(1000); }
+        Serial.println("MPU connection FAILED — continuing without IMU.");
+    } else {
+        Serial.println("MPU-9250 initialized.");
     }
-    Serial.println("MPU-9250 initialized.");
-
-    // --- DFRobot BloodOxygen_S (SEN0344) ---
-    // IMPORTANT: The library's begin() calls Wire.begin() internally with NO
-    // arguments, which resets the I2C bus. On FireBeetle the default pins (21/22)
-    // match our explicit pins, but the reset can corrupt in-flight state.
-    // We re-initialize Wire AFTER the library's begin() to ensure clean state.
-    Serial.println("Initializing BloodOxygen_S (SEN0344)...");
-    if (!bloodOxygen.begin()) {
-        Serial.println("BloodOxygen_S not found on I2C 0x57. Halting.");
-        while (1) { delay(1000); }
-    }
-    // Re-init Wire to undo the library's begin() bus reset
-    Wire.begin(I2C_SDA, I2C_SCL);
-    Serial.println("BloodOxygen_S I2C probe OK. Re-initialized Wire bus.");
-
-    // Start PPG collection — sensor MCU begins accumulating samples
-    bloodOxygen.sensorStartCollect();
-    Serial.println("BloodOxygen_S collecting. First valid reading in ~8 seconds.");
-
-    // --- HR polling will be handled in sensorTask (no interrupt needed) ---
-    Serial.println("HR: polling mode (4s interval, 8s warm-up)");
 
     // --- SH1106 OLED ---
+    delay(100);
+    Wire.setClock(100000);
     Serial.println("Initializing SH1106 OLED...");
     if (!display.begin(I2C_ADDR_DISPLAY, true)) {
         Serial.println("SH1106 allocation failed. Halting.");
@@ -984,133 +1014,107 @@ void emgTask(void* pvParameters) {
 // SENSOR TASK (Core 1) — I2C reads + HR polling
 // This is the authoritative timestamp writer (F-C2).
 //
-// DFRobot SEN0344 BloodOxygen_S library investigation notes:
-//   - sensorStartCollect() writes {0x00, 0x01} to register 0x20 (start PPG)
-//   - getHeartbeatSPO2() reads 8 bytes from register 0x0C via raw I2C
-//     rbuf[0]   = SPO2 (0 → invalid → library returns -1)
-//     rbuf[1]   = SPO2 valid flag (UNUSED by library)
-//     rbuf[2-5] = Heartbeat, big-endian uint32 (0 → invalid → -1)
-//     rbuf[6]   = Heartbeat valid flag (UNUSED by library)
-//     rbuf[7]   = unused
-//   - Library begin() calls Wire.begin() with no args — resets I2C bus.
-//     On FireBeetle, default pins (21/22) match ours, but the reset can
-//     corrupt in-flight I2C state. We re-init Wire after begin().
-//   - Sensor internal MCU needs ~4-8 seconds after sensorStartCollect()
-//     before the FIRST valid reading. Subsequent readings update every ~4s.
-//   - No INT pin usage needed — polling at 4s interval matches sensor rate.
-//   - Library returns SPO2/Heartbeat = -1 when no finger or still measuring.
+// MAX30102/SparkFun MAX30105 library notes:
+//   - ADC range 16384 (18-bit, max ~262143) for finger-present thresholds
+//   - IR LED at 0xFF for beat detection via checkForBeat() on IR channel
+//   - Red LED at 0xFF for SpO2 from red/IR DC ratio (Maxim AN6407)
+//   - Polling at 25Hz via particleSensor.getIR() + particleSensor.getRed()
+//   - No INT pin needed — beat detection is purely software
 // =====================================================================
 void sensorTask(void* pvParameters) {
     TickType_t xLastWakeTime = xTaskGetTickCount();
-    unsigned long lastHRRead = 0;
-    unsigned long taskStart = millis();
-    const unsigned long HR_READ_INTERVAL_MS = 4000;   // sensor updates every ~4s
-    const unsigned long HR_WARMUP_MS        = 8000;   // sensor needs 4-8s for first reading
-    int hrReadCount = 0;
-    int hrValidCount = 0;
+    static int mpuCycle = 0;
+
+    // Wait for MAX30105 to stabilize after LED init
+    vTaskDelay(pdMS_TO_TICKS(2000));
+
+    if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        Serial.println("[SENSOR] Task started — reading at 25Hz");
+        xSemaphoreGive(gSerialMutex);
+    }
 
     for (;;) {
-        // --- HR + SpO2: poll at sensor update rate (every ~4 seconds) ---
         unsigned long now = millis();
-        if (now - lastHRRead >= HR_READ_INTERVAL_MS) {
-            lastHRRead = now;
-            hrReadCount++;
 
-            // Skip first readings during sensor warm-up — the sensor's onboard MCU
-            // needs time to accumulate PPG samples before the first valid output.
-            // Without this, the first 1-2 reads return all zeros (SPO2=0, HR=0).
-            if (now - taskStart < HR_WARMUP_MS && hrReadCount <= 2) {
-                if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                    Serial.printf("[HR] Skip #%d (warm-up)\n", hrReadCount);
-                    xSemaphoreGive(gSerialMutex);
-                }
-            } else {
-                // Call the library's read method
-                bloodOxygen.getHeartbeatSPO2();
+        // --- MAX30105: read IR and Red at 25Hz ---
+        long irValue = particleSensor.getIR();
+        long redValue = particleSensor.getRed();
 
-                int rawHR   = bloodOxygen._sHeartbeatSPO2.Heartbeat;
-                int rawSPO2 = bloodOxygen._sHeartbeatSPO2.SPO2;
+        // --- Beat detection on IR channel (SparkFun heartRate library) ---
+        // heartRate.h has 13 file-scope globals (DC estimator, FIR buffer,
+        // zero-crossing state) that get poisoned when IR drops to near-zero.
+        // Reset them when no finger is present so the detector is clean
+        // when the finger returns.
+        if (irValue < 5000) {
+            IR_AC_Max = 20; IR_AC_Min = -20;
+            IR_AC_Signal_Current = 0; IR_AC_Signal_Previous = 0;
+            IR_AC_Signal_min = 0; IR_AC_Signal_max = 0;
+            IR_Average_Estimated = 0;
+            positiveEdge = 0; negativeEdge = 0;
+            ir_avg_reg = 0; offset = 0;
+            memset(cbuf, 0, sizeof(cbuf));
+        } else if (checkForBeat(irValue) == true) {
+            long delta = millis() - gLastBeatMs;
+            gLastBeatMs = millis();
 
-                // Also do a raw I2C probe to see exactly what register 0x0C contains
-                // This is diagnostic — helps identify if the sensor is responding at all
-                uint8_t rawBuf[8] = {0};
-                Wire.beginTransmission(0x57);
-                Wire.write(0x0C);
-                int wireStatus = Wire.endTransmission(false);  // false = send restart
-                int bytesRead = 0;
-                if (wireStatus == 0) {
-                    Wire.requestFrom(0x57, (uint8_t)8);
-                    bytesRead = Wire.available();
-                    for (int i = 0; i < 8 && Wire.available(); i++) {
-                        rawBuf[i] = Wire.read();
-                    }
-                }
+            float bpm = 60.0f / (delta / 1000.0f);
 
-                // Log simplified status for first 10 reads
-                if (hrReadCount <= 10) {
-                    bool valid = (rawHR > 0 && rawSPO2 > 0);
-                    if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                        Serial.printf("[HR] Read #%d: %s\n", hrReadCount,
-                            valid ? "OK" : "no signal");
-                        xSemaphoreGive(gSerialMutex);
-                    }
-                }
+            if (bpm > 20.0f && bpm < 255.0f) {
+                gHrBuffer[gHrBufIdx++] = bpm;
+                gHrBufIdx %= 4;
 
-                // Library returns -1 when no valid data (finger off / still measuring)
-                // Preserve this: only accept positive values as valid
-                float hr   = (rawHR   > 0) ? (float)rawHR   : 0.0f;
-                float spo2 = (rawSPO2 > 0) ? (float)rawSPO2 : 0.0f;
-
-                // Track first valid reading
-                if (rawHR > 0 && rawSPO2 > 0) {
-                    if (hrValidCount == 0) {
-                        if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                            Serial.print("[HR] FIRST VALID READING at ");
-                            Serial.print(now / 1000);
-                            Serial.print("s: HR=");
-                            Serial.print(rawHR);
-                            Serial.print(" SpO2=");
-                            Serial.println(rawSPO2);
-                            xSemaphoreGive(gSerialMutex);
-                        }
-                    }
-                    hrValidCount++;
-                }
-
-                // Periodic health check every 20 reads (~80 seconds)
-                if (hrReadCount > 0 && hrReadCount % 20 == 0) {
-                    if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                        Serial.printf("[HR] Status: %d/%d valid readings\n", hrValidCount, hrReadCount);
-                        xSemaphoreGive(gSerialMutex);
-                    }
-                }
+                float avg = 0.0f;
+                for (int i = 0; i < 4; i++) avg += gHrBuffer[i];
+                float avgBpm = avg / 4.0f;
 
                 if (xSemaphoreTake(gStateMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                    gState.heart_rate = hr;
-                    gState.spo2 = spo2;
+                    gState.heart_rate = avgBpm;
                     gState.timestamp = millis();
                     xSemaphoreGive(gStateMutex);
+                }
+
+                if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+                    Serial.printf("[HR] Beat detected: %.0f BPM (avg %.0f)\n", bpm, avgBpm);
+                    xSemaphoreGive(gSerialMutex);
                 }
             }
         }
 
-        // --- MPU-9250: motion magnitude (always read at 20 Hz) ---
-        float motion = 0.0f;
-        if (mpu.update()) {
-            float ax = mpu.getAccX();
-            float ay = mpu.getAccY();
-            float az = mpu.getAccZ();
-            motion = sqrtf(ax * ax + ay * ay + az * az);
+        // --- SpO2 from red/IR DC ratio (Maxim AN6407) ---
+        gRedDC = DC_EMA_ALPHA * (float)redValue + (1.0f - DC_EMA_ALPHA) * gRedDC;
+        gIrDC  = DC_EMA_ALPHA * (float)irValue + (1.0f - DC_EMA_ALPHA) * gIrDC;
+
+        if (gIrDC > 1000.0f) {
+            float rRatio = gRedDC / gIrDC;
+            float spo2 = -45.060f * rRatio * rRatio + 30.354f * rRatio + 94.845f;
+            gSpo2EMA = SPO2_EMA_ALPHA * spo2 + (1.0f - SPO2_EMA_ALPHA) * gSpo2EMA;
+
+            if (xSemaphoreTake(gStateMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                gState.spo2 = constrain(gSpo2EMA, 70.0f, 100.0f);
+                xSemaphoreGive(gStateMutex);
+            }
         }
 
-        if (xSemaphoreTake(gStateMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-            gState.motion_magnitude = motion;
-            gState.timestamp = millis();
+        // --- MPU-9250: motion magnitude (every other cycle ≈ 12Hz) ---
+        mpuCycle++;
+        if (mpuCycle % 2 == 0) {
+            float motion = 0.0f;
+            if (mpu.update()) {
+                float ax = mpu.getAccX();
+                float ay = mpu.getAccY();
+                float az = mpu.getAccZ();
+                motion = sqrtf(ax * ax + ay * ay + az * az);
+            }
+
+            if (xSemaphoreTake(gStateMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                gState.motion_magnitude = motion;
+                gState.timestamp = millis();
             xSemaphoreGive(gStateMutex);
+            }
         }
 
-        // 20 Hz -> 50 ms period
-        vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(50));
+        // 25Hz -> 40ms period
+        vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(40));
     }
 }
 
@@ -1270,14 +1274,8 @@ void inferenceTask(void* pvParameters) {
             xSemaphoreGive(gStateMutex);
         }
 
-        // HR placeholder (from demo): when no finger detected (HR=0),
-        // use NORM_MEAN[0] as placeholder so inference can still run
-        // (EMG + motion detection still useful without HR sensor).
-        // gState.heart_rate keeps 0 for display purposes.
-        float heartRateForModel = (hr > 0.0f) ? hr : NORM_MEAN[0];
-
         // Normalize inputs: z-score
-        input[0] = (heartRateForModel - NORM_MEAN[0]) / NORM_STD[0];
+        input[0] = (hr - NORM_MEAN[0]) / NORM_STD[0];
         input[1] = (emg - NORM_MEAN[1]) / NORM_STD[1];
         input[2] = (mot - NORM_MEAN[2]) / NORM_STD[2];
 
@@ -1334,7 +1332,7 @@ void inferenceTask(void* pvParameters) {
                 float oldThreshold = gAdaptiveThreshold;
                 gAdaptiveThreshold = mean + 3.0f * std;
 
-                // Cap threshold to prevent runaway (e.g., from no-finger condition before fix)
+                // Cap threshold to prevent runaway
                 const float MAX_THRESHOLD = INITIAL_THRESHOLD * 100.0f;  // ~0.308
                 if (gAdaptiveThreshold > MAX_THRESHOLD) {
                     gAdaptiveThreshold = MAX_THRESHOLD;

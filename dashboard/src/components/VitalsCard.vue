@@ -105,10 +105,10 @@ const trendDirection = computed(() =>
   opacity: 0.8;
 }
 
-.card-danger .card-top-bar { background: linear-gradient(90deg, var(--color-danger), rgba(232, 93, 74, 0.3)); }
-.card-purple .card-top-bar { background: linear-gradient(90deg, var(--color-purple), rgba(176, 138, 219, 0.3)); }
-.card-info .card-top-bar { background: linear-gradient(90deg, var(--color-info), rgba(90, 158, 199, 0.3)); }
-.card-success .card-top-bar { background: linear-gradient(90deg, var(--color-success), rgba(90, 184, 143, 0.3)); }
+.card-danger .card-top-bar { background: linear-gradient(90deg, #FF4D6A, rgba(255, 77, 106, 0.2)); }
+.card-purple .card-top-bar { background: linear-gradient(90deg, #9D4EDD, rgba(157, 78, 221, 0.2)); }
+.card-info .card-top-bar { background: linear-gradient(90deg, #00E5FF, rgba(0, 229, 255, 0.2)); }
+.card-success .card-top-bar { background: linear-gradient(90deg, #00E5A0, rgba(0, 229, 160, 0.2)); }
 
 .vitals-card:hover .card-top-bar {
   opacity: 1;
@@ -130,10 +130,10 @@ const trendDirection = computed(() =>
   justify-content: center;
 }
 
-.card-danger .card-icon-wrap { background: rgba(232, 93, 74, 0.12); color: var(--color-danger); }
-.card-purple .card-icon-wrap { background: rgba(176, 138, 219, 0.12); color: var(--color-purple); }
-.card-info .card-icon-wrap { background: rgba(90, 158, 199, 0.12); color: var(--color-info); }
-.card-success .card-icon-wrap { background: rgba(90, 184, 143, 0.12); color: var(--color-success); }
+.card-danger .card-icon-wrap { background: rgba(255, 77, 106, 0.12); color: #FF4D6A; }
+.card-purple .card-icon-wrap { background: rgba(157, 78, 221, 0.12); color: #9D4EDD; }
+.card-info .card-icon-wrap { background: rgba(0, 229, 255, 0.1); color: #00E5FF; }
+.card-success .card-icon-wrap { background: rgba(0, 229, 160, 0.1); color: #00E5A0; }
 
 .card-label {
   font-size: 0.75rem;
@@ -156,10 +156,10 @@ const trendDirection = computed(() =>
   line-height: 1.1;
 }
 
-.card-danger .card-value { color: #f0a09a; }
-.card-purple .card-value { color: #d0c4f0; }
-.card-info .card-value { color: #9ecce0; }
-.card-success .card-value { color: #9dd8be; }
+.card-danger .card-value { color: #FF4D6A; }
+.card-purple .card-value { color: #9D4EDD; }
+.card-info .card-value { color: #00E5FF; }
+.card-success .card-value { color: #00E5A0; }
 
 .card-unit {
   font-size: 0.82rem;
