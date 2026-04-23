@@ -334,4 +334,27 @@ function handleDisconnect() {
   0%, 100% { box-shadow: 0 0 4px var(--color-success); }
   50% { box-shadow: 0 0 10px var(--color-success); }
 }
+
+@container (max-width: 500px) {
+  .conn-panel {
+    gap: 0.3rem;
+    flex-wrap: wrap;
+  }
+  .ip-input-group {
+    max-width: none;
+    flex: 1;
+    min-width: 0;
+  }
+  .btn {
+    padding: 0.4rem 0.6rem;
+    font-size: 0.72rem;
+  }
+  .status-badge {
+    font-size: 0.65rem;
+    padding: 0.2rem 0.5rem;
+  }
+  .device-name {
+    font-size: 0.7rem;
+  }
+}
 </style>

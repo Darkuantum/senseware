@@ -1,10 +1,22 @@
 <template>
   <div class="chart-container">
     <div class="chart-header">
-      <h3 class="chart-title">Live Telemetry</h3>
-      <span v-if="dataPointCount > 0" class="chart-subtitle">
-        {{ dataPointCount }} samples
-      </span>
+      <div class="chart-header-left">
+        <h3 class="chart-title">Live Telemetry</h3>
+        <span v-if="dataPointCount > 0" class="chart-subtitle">
+          {{ dataPointCount }} samples
+        </span>
+      </div>
+      <div class="chart-header-right">
+        <div class="time-range-btns">
+          <button
+            v-for="opt in timeOptions"
+            :key="opt.value"
+            :class="['range-btn', { active: maxPoints === opt.value }]"
+            @click="setMaxPoints(opt.value)"
+          >{{ opt.label }}</button>
+        </div>
+      </div>
     </div>
     <div class="chart-wrapper">
       <Line v-if="chartMounted" :data="chartData" :options="chartOptions" />
@@ -49,6 +61,13 @@ const ws = useTelemetry()
 const chartMounted = ref(false)
 
 const MAX_POINTS = 60
+const maxPoints = ref(60)
+const timeOptions = [
+  { label: '30s', value: 30 },
+  { label: '1m', value: 60 },
+  { label: '2m', value: 120 },
+  { label: '5m', value: 300 },
+]
 
 // Plain (non-reactive) arrays — avoid Chart.js reactivity loop
 const _labels = []
@@ -75,8 +94,7 @@ function pushDataPoint(data) {
   _spo2Data.push(data.spo2)
   _emgData.push(data.emg)
   _motionData.push(data.mot)
-  // Always maintain exactly MAX_POINTS
-  while (_labels.length > MAX_POINTS) {
+  while (_labels.length > maxPoints.value) {
     _labels.shift()
     _hrData.shift()
     _spo2Data.shift()
@@ -86,8 +104,20 @@ function pushDataPoint(data) {
   dataVersion.value++
 }
 
-const dataPointCount = computed(() => _hrData.filter(v => v !== null).length)
-const hasData = computed(() => _hrData.some(v => v !== null))
+function setMaxPoints(val) {
+  maxPoints.value = val
+  while (_labels.length > val) {
+    _labels.shift()
+    _hrData.shift()
+    _spo2Data.shift()
+    _emgData.shift()
+    _motionData.shift()
+  }
+  dataVersion.value++
+}
+
+const dataPointCount = computed(() => { void dataVersion.value; return _hrData.filter(v => v !== null).length })
+const hasData = computed(() => { void dataVersion.value; return _hrData.some(v => v !== null) })
 
 // Unsubscribers for telemetry events
 let unsubscribers = []
@@ -111,7 +141,7 @@ onMounted(() => {
         _emgData.length = 0
         _motionData.length = 0
         // Re-pre-fill
-        for (let i = 0; i < MAX_POINTS; i++) {
+        for (let i = 0; i < maxPoints.value; i++) {
           _labels.push('')
           _hrData.push(null)
           _spo2Data.push(null)
@@ -303,9 +333,51 @@ const chartOptions = {
 
 .chart-header {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.chart-header-left {
+  display: flex;
   align-items: baseline;
   gap: 0.75rem;
-  margin-bottom: 0.75rem;
+}
+
+.chart-header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.time-range-btns {
+  display: flex;
+  gap: 0.25rem;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.range-btn {
+  padding: 0.2rem 0.5rem;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-family: var(--mono);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.range-btn:hover {
+  color: var(--text-secondary);
+}
+
+.range-btn.active {
+  background: var(--accent);
+  color: #fff;
 }
 
 .chart-title {
@@ -351,5 +423,32 @@ const chartOptions = {
 .chart-placeholder .hint {
   font-size: 0.78rem;
   color: var(--text-secondary);
+}
+
+@container (max-width: 500px) {
+  .chart-container {
+    padding: 0.75rem;
+    border-radius: var(--radius-sm);
+  }
+  .chart-wrapper {
+    height: 220px;
+  }
+  .chart-title {
+    font-size: 0.8rem;
+  }
+  .chart-subtitle {
+    font-size: 0.65rem;
+  }
+  .chart-header {
+    margin-bottom: 0.5rem;
+  }
+  .time-range-btns {
+    gap: 0.15rem;
+    padding: 1px;
+  }
+  .range-btn {
+    padding: 0.15rem 0.35rem;
+    font-size: 0.6rem;
+  }
 }
 </style>

@@ -7,14 +7,25 @@
           <span v-if="alerts.length > 0" class="alert-count">{{ alerts.length }}</span>
         </h3>
       </div>
-      <button
-        v-if="alerts.length > 0"
-        class="btn-clear"
-        @click="clearAlerts"
-        title="Clear alert log"
-      >
-        Clear
-      </button>
+      <div class="alert-header-right">
+        <button
+          v-if="alerts.length > 0"
+          class="btn-export"
+          @click="exportAlerts"
+          title="Export alerts as CSV"
+        >
+          <Download :size="14" />
+          Export
+        </button>
+        <button
+          v-if="alerts.length > 0"
+          class="btn-clear"
+          @click="clearAlerts"
+          title="Clear alert log"
+        >
+          Clear
+        </button>
+      </div>
     </div>
 
     <div ref="logContainer" class="alert-list">
@@ -41,7 +52,7 @@
           <span class="alert-details">
             HR: {{ alert.heartRate.toFixed(0) }} BPM &middot;
             EMG: {{ alert.emgEnvelope.toFixed(1) }} &middot;
-            Motion: {{ alert.motionMagnitude.toFixed(2) }}
+            Motion: {{ alert.motionMagnitude.toFixed(2) }}<template v-if="alert.mse != null"> &middot; MSE: {{ alert.mse.toFixed(6) }}</template>
           </span>
         </div>
       </TransitionGroup>
@@ -51,7 +62,7 @@
 
 <script setup>
 import { ref, nextTick, onMounted, onUnmounted } from 'vue'
-import { AlertTriangle, Clock, ShieldCheck } from 'lucide-vue-next'
+import { AlertTriangle, Clock, ShieldCheck, Download } from 'lucide-vue-next'
 import { useTelemetry } from '../composables/useTelemetry.js'
 
 const ws = useTelemetry()
@@ -63,7 +74,7 @@ let unsubscribers = []
 
 onMounted(() => {
   unsubscribers.push(
-    ws.manager.on('alert', ({ alert, hr, emg, mot }) => {
+    ws.manager.on('alert', ({ alert, hr, emg, mot, mse }) => {
       if (!alert) return
 
       const now = new Date()
@@ -75,6 +86,7 @@ onMounted(() => {
         heartRate: hr,
         emgEnvelope: emg,
         motionMagnitude: mot,
+        mse: mse ?? null,
       })
 
       // Keep only the last 200 alerts
@@ -98,6 +110,21 @@ onUnmounted(() => {
 
 function clearAlerts() {
   alerts.value = []
+}
+
+function exportAlerts() {
+  const header = 'Time,Heart Rate (BPM),EMG Envelope (uV),Motion (g),MSE'
+  const rows = alerts.value.map(a =>
+    [a.time, a.heartRate.toFixed(1), a.emgEnvelope.toFixed(2), a.motionMagnitude.toFixed(4), a.mse != null ? a.mse.toFixed(6) : ''].join(',')
+  )
+  const csv = [header, ...rows].join('\n')
+  const blob = new Blob([csv], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `senseware_alerts_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
 }
 </script>
 
@@ -142,6 +169,31 @@ function clearAlerts() {
   color: var(--color-danger);
   font-size: 0.72rem;
   font-weight: 700;
+}
+
+.alert-header-right {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.btn-export {
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  transition: all var(--transition-fast);
+}
+
+.btn-export:hover {
+  background: rgba(139, 92, 246, 0.12);
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 .btn-clear {
@@ -257,5 +309,28 @@ function clearAlerts() {
 .alert-slide-enter-from {
   opacity: 0;
   transform: translateX(-20px);
+}
+
+@container (max-width: 500px) {
+  .alert-log {
+    padding: 0.75rem;
+    max-height: 280px;
+    border-radius: var(--radius-sm);
+  }
+  .alert-title {
+    font-size: 0.8rem;
+  }
+  .alert-entry {
+    padding: 0.4rem 0.5rem;
+    margin-bottom: 0.3rem;
+  }
+  .alert-details {
+    font-size: 0.65rem;
+  }
+  .btn-export,
+  .btn-clear {
+    font-size: 0.7rem;
+    padding: 0.2rem 0.5rem;
+  }
 }
 </style>

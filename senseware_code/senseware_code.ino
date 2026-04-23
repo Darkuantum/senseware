@@ -23,6 +23,12 @@
  *   - Merged demo behavior: windowed anomaly detection, double-pulse haptic,
  *     alert blink, dino animation, accuracy %
  *   - WiFi + SSE server for remote telemetry
+ *
+ * Porting notes (core 3.x → 2.x):
+ *   - LEDC: ledcAttach(pin, freq, res) → ledcSetup(ch, freq, res) + ledcAttachPin(pin, ch)
+ *   - ledcWrite(pin, val) → ledcWrite(channel, val)
+ *   - Sensor fallback: dead I2C sensors feed NORM_MEAN calibration values (z-score=0)
+ *     to prevent false anomaly triggers
  */
 
 // =====================================================================
@@ -107,7 +113,7 @@ static void recoverI2C() {
 // =====================================================================
 // HAPTIC CONFIGURATION — double-pulse pattern (merged from demo)
 // =====================================================================
-#define HAPTIC_DUTY         110
+#define HAPTIC_DUTY         255
 #define HAPTIC_PULSE_MS     220
 #define HAPTIC_GAP_MS       180
 #define HAPTIC_COOLDOWN_MS  15000  // Matches anomaly cooldown
@@ -148,11 +154,21 @@ const float NORM_STD[NUM_FEATURES]  = {1.0000f,  146.1824f, 0.0391f};
 // GLOBAL OBJECTS
 // =====================================================================
 const int pwmFreq = 5000, pwmResolution = 8;
+const int pwmChannel = 0;
 
 MAX30105 particleSensor;
 MPU9250 mpu;
 Adafruit_SH1106G display = Adafruit_SH1106G(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 EMGFilters emgFilter;
+
+// =====================================================================
+// SENSOR HEALTH FLAGS
+// =====================================================================
+// When a sensor fails init, its flag is set false. The inference task
+// substitutes NORM_MEAN for dead sensors (z-score=0) so they don't
+// contribute to anomaly detection and can't trigger false alerts.
+bool gHrSensorAlive = true;
+bool gMpuAlive = true;
 
 // =====================================================================
 // PHYSIO STATE & SYNCHRONIZATION
@@ -254,8 +270,8 @@ unsigned long gWindowStartMs = 0;
 int gAnomalyEventCount = 0;
 bool gPrevImuAnomaly = false;
 unsigned long gContinuousAnomalyStartMs = 0;
-bool gCooldownActive = false;
-unsigned long gCooldownStartMs = 0;
+volatile bool gCooldownActive = false;
+volatile unsigned long gCooldownStartMs = 0;
 
 // =====================================================================
 // HAPTIC STATE — double-pulse pattern (from demo)
@@ -268,8 +284,8 @@ int gVibrationPulsesRemaining = 0;
 // =====================================================================
 // ALERT BLINK STATE (from demo)
 // =====================================================================
-bool gAlertBlinkActive = false;
-unsigned long gAlertBlinkStart = 0;
+volatile bool gAlertBlinkActive = false;
+volatile unsigned long gAlertBlinkStart = 0;
 
 // =====================================================================
 // WIFI + HTTP + SSE SERVER
@@ -581,21 +597,17 @@ void setup() {
     delay(500);
     Serial.println("Initializing MAX30105 (HR/SpO2)...");
     if (!particleSensor.begin(Wire, I2C_SPEED_STANDARD)) {
-        Serial.println("MAX30105 not found on I2C. Halting.");
-        while (1) { delay(1000); }
+        Serial.println("MAX30105 not found on I2C — continuing without HR/SpO2.");
+        gHrSensorAlive = false;
+    } else {
+        Serial.println("MAX30105 found.");
+        Wire.begin(I2C_SDA, I2C_SCL);
+        Wire.setClock(100000);
+        particleSensor.setup(0x1F, 4, 3, 400, 411, 16384);
+        particleSensor.setPulseAmplitudeRed(0xA0);
+        particleSensor.setPulseAmplitudeIR(0xA0);
+        Serial.println("MAX30105 LEDs on (Red=0xA0, IR=0xA0, ADC=16384). Place finger to start.");
     }
-    Serial.println("MAX30105 found.");
-    Wire.begin(I2C_SDA, I2C_SCL);
-    Wire.setClock(100000);
-    // ADC range 16384 → 18-bit, max value ~262143. Required for our
-    // finger-present thresholds (IR>30000, Red>20000) to be reachable.
-    // Sample rate 400, pulse width 411µs (18-bit native), 4-sample averaging.
-    particleSensor.setup(0x1F, 4, 3, 400, 411, 16384);
-    // Boost IR for beat detection (checkForBeat runs on IR channel).
-    // Red for SpO2 (red/IR DC ratio). Both at 0xFF = ~50mA.
-    particleSensor.setPulseAmplitudeRed(0xA0);
-    particleSensor.setPulseAmplitudeIR(0xA0);
-    Serial.println("MAX30105 LEDs on (Red=0xA0, IR=0xA0, ADC=16384). Place finger to start.");
 
     // --- MPU-9250 ---
     delay(200);  // Settle I2C bus before adding more devices
@@ -603,6 +615,7 @@ void setup() {
     mpu.verbose(true);
     if (!mpu.setup(I2C_ADDR_MPU)) {
         Serial.println("MPU connection FAILED — continuing without IMU.");
+        gMpuAlive = false;
     } else {
         Serial.println("MPU-9250 initialized.");
     }
@@ -619,9 +632,10 @@ void setup() {
     display.display();
     Serial.println("SH1106 OLED initialized.");
 
-    // --- Vibration Motor (LEDC) ---
-    ledcAttach(VIB_PIN, pwmFreq, pwmResolution);
-    ledcWrite(VIB_PIN, 0);
+    // --- Vibration Motor (LEDC) — core 2.x API ---
+    ledcSetup(pwmChannel, pwmFreq, pwmResolution);
+    ledcAttachPin(VIB_PIN, pwmChannel);
+    ledcWrite(pwmChannel, 0);
     Serial.println("Vibration motor initialized.");
 
     // --- EMG ADC ---
@@ -817,12 +831,17 @@ void loop() {
 // DOUBLE-PULSE HAPTIC (from demo)
 // =====================================================================
 void startDoubleVibration() {
+    if (xSemaphoreTake(gSerialMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        Serial.printf("[HAPTIC] Triggered at %lu ms\n", millis());
+        xSemaphoreGive(gSerialMutex);
+    }
+
     gVibrationSequenceActive = true;
     gVibrationMotorOn = true;
     gVibrationStepStart = millis();
     gVibrationPulsesRemaining = 2;
 
-    ledcWrite(VIB_PIN, HAPTIC_DUTY * 0.8); // slightly softer start
+    ledcWrite(pwmChannel, HAPTIC_DUTY);
 
     gAlertBlinkActive = true;
     gAlertBlinkStart = millis();
@@ -835,7 +854,7 @@ void updateVibration() {
 
     if (gVibrationMotorOn) {
         if (now - gVibrationStepStart >= HAPTIC_PULSE_MS) {
-            ledcWrite(VIB_PIN, 0);
+            ledcWrite(pwmChannel, 0);
             gVibrationMotorOn = false;
             gVibrationStepStart = now;
             gVibrationPulsesRemaining--;
@@ -846,7 +865,7 @@ void updateVibration() {
         }
     } else {
         if (gVibrationPulsesRemaining > 0 && now - gVibrationStepStart >= HAPTIC_GAP_MS) {
-            ledcWrite(VIB_PIN, HAPTIC_DUTY);
+            ledcWrite(pwmChannel, HAPTIC_DUTY);
             gVibrationMotorOn = true;
             gVibrationStepStart = now;
         }
@@ -1037,15 +1056,18 @@ void sensorTask(void* pvParameters) {
         unsigned long now = millis();
 
         // --- MAX30105: read IR and Red at 25Hz ---
-        long irValue = particleSensor.getIR();
-        long redValue = particleSensor.getRed();
+        long irValue = 0, redValue = 0;
+        if (gHrSensorAlive) {
+            irValue = particleSensor.getIR();
+            redValue = particleSensor.getRed();
+        }
 
         // --- Beat detection on IR channel (SparkFun heartRate library) ---
         // heartRate.h has 13 file-scope globals (DC estimator, FIR buffer,
         // zero-crossing state) that get poisoned when IR drops to near-zero.
         // Reset them when no finger is present so the detector is clean
         // when the finger returns.
-        if (irValue < 5000) {
+        if (gHrSensorAlive && irValue < 5000) {
             IR_AC_Max = 20; IR_AC_Min = -20;
             IR_AC_Signal_Current = 0; IR_AC_Signal_Previous = 0;
             IR_AC_Signal_min = 0; IR_AC_Signal_max = 0;
@@ -1053,7 +1075,7 @@ void sensorTask(void* pvParameters) {
             positiveEdge = 0; negativeEdge = 0;
             ir_avg_reg = 0; offset = 0;
             memset(cbuf, 0, sizeof(cbuf));
-        } else if (checkForBeat(irValue) == true) {
+        } else if (gHrSensorAlive && checkForBeat(irValue) == true) {
             long delta = millis() - gLastBeatMs;
             gLastBeatMs = millis();
 
@@ -1081,35 +1103,39 @@ void sensorTask(void* pvParameters) {
         }
 
         // --- SpO2 from red/IR DC ratio (Maxim AN6407) ---
-        gRedDC = DC_EMA_ALPHA * (float)redValue + (1.0f - DC_EMA_ALPHA) * gRedDC;
-        gIrDC  = DC_EMA_ALPHA * (float)irValue + (1.0f - DC_EMA_ALPHA) * gIrDC;
+        if (gHrSensorAlive) {
+            gRedDC = DC_EMA_ALPHA * (float)redValue + (1.0f - DC_EMA_ALPHA) * gRedDC;
+            gIrDC  = DC_EMA_ALPHA * (float)irValue + (1.0f - DC_EMA_ALPHA) * gIrDC;
 
-        if (gIrDC > 1000.0f) {
-            float rRatio = gRedDC / gIrDC;
-            float spo2 = -45.060f * rRatio * rRatio + 30.354f * rRatio + 94.845f;
-            gSpo2EMA = SPO2_EMA_ALPHA * spo2 + (1.0f - SPO2_EMA_ALPHA) * gSpo2EMA;
+            if (gIrDC > 1000.0f) {
+                float rRatio = gRedDC / gIrDC;
+                float spo2 = -45.060f * rRatio * rRatio + 30.354f * rRatio + 94.845f;
+                gSpo2EMA = SPO2_EMA_ALPHA * spo2 + (1.0f - SPO2_EMA_ALPHA) * gSpo2EMA;
 
-            if (xSemaphoreTake(gStateMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                gState.spo2 = constrain(gSpo2EMA, 70.0f, 100.0f);
-                xSemaphoreGive(gStateMutex);
+                if (xSemaphoreTake(gStateMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                    gState.spo2 = constrain(gSpo2EMA, 70.0f, 100.0f);
+                    xSemaphoreGive(gStateMutex);
+                }
             }
         }
 
         // --- MPU-9250: motion magnitude (every other cycle ≈ 12Hz) ---
-        mpuCycle++;
-        if (mpuCycle % 2 == 0) {
-            float motion = 0.0f;
-            if (mpu.update()) {
-                float ax = mpu.getAccX();
-                float ay = mpu.getAccY();
-                float az = mpu.getAccZ();
-                motion = sqrtf(ax * ax + ay * ay + az * az);
-            }
+        if (gMpuAlive) {
+            mpuCycle++;
+            if (mpuCycle % 2 == 0) {
+                float motion = 0.0f;
+                if (mpu.update()) {
+                    float ax = mpu.getAccX();
+                    float ay = mpu.getAccY();
+                    float az = mpu.getAccZ();
+                    motion = sqrtf(ax * ax + ay * ay + az * az);
+                }
 
-            if (xSemaphoreTake(gStateMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                gState.motion_magnitude = motion;
-                gState.timestamp = millis();
-            xSemaphoreGive(gStateMutex);
+                if (xSemaphoreTake(gStateMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                    gState.motion_magnitude = motion;
+                    gState.timestamp = millis();
+                    xSemaphoreGive(gStateMutex);
+                }
             }
         }
 
@@ -1175,7 +1201,7 @@ void displayTask(void* pvParameters) {
             display.display();
             lastDisplayCycle = millis();
 
-            vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(500));
+            vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(100));
             continue;
         }
 
@@ -1184,7 +1210,7 @@ void displayTask(void* pvParameters) {
             drawCooldownDinoScreen();
             lastDisplayCycle = millis();
 
-            vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(500));
+            vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(100));
             continue;
         }
 
@@ -1267,10 +1293,12 @@ void inferenceTask(void* pvParameters) {
         float mot = 0.0f;
 
         // Snapshot under mutex — release before inference
+        // Dead sensors feed their calibration mean (z-score=0) to prevent
+        // false anomaly triggers from zero/garbage readings.
         if (xSemaphoreTake(gStateMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-            hr  = gState.heart_rate;
+            hr  = gHrSensorAlive ? gState.heart_rate      : NORM_MEAN[0];
             emg = gState.emg_envelope;
-            mot = gState.motion_magnitude;
+            mot = gMpuAlive    ? gState.motion_magnitude : NORM_MEAN[2];
             xSemaphoreGive(gStateMutex);
         }
 

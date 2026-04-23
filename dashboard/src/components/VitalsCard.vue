@@ -87,6 +87,7 @@ const trendDirection = computed(() =>
   position: relative;
   overflow: hidden;
   transition: all var(--transition-normal);
+  min-width: 0;
   min-width: 140px;
 }
 
@@ -182,5 +183,32 @@ const trendDirection = computed(() =>
 
 .trend-down {
   color: var(--color-success);
+}
+
+@container (max-width: 500px) {
+  .vitals-card {
+    min-width: 0 !important;
+    padding: 0.5rem 0.6rem;
+  }
+  .card-icon-wrap {
+    width: 30px;
+    height: 30px;
+  }
+  .card-icon-wrap svg {
+    width: 14px;
+    height: 14px;
+  }
+  .card-label {
+    font-size: 0.65rem;
+  }
+  .card-value {
+    font-size: 1rem;
+  }
+  .card-unit {
+    font-size: 0.6rem;
+  }
+  .card-trend {
+    font-size: 0.6rem;
+  }
 }
 </style>

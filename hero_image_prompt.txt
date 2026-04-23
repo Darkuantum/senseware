@@ -1,0 +1,15 @@
+# GLM-Image Prompt for Senseware Hero Image
+
+A dark futuristic hero image for Senseware, an Edge-AI Wearable Stress Detection system for autism care. The composition features:
+
+- Deep midnight black background with subtle holographic grid patterns and floating electric purple (#8B5CF6) and cyan (#00E5FF) orbs
+- Central focus on a sleek, modern wearable device (bracelet or wristband) with glowing sensor elements
+- The device shows integrated sensors: PPG heart rate sensor, EMG electrodes, and motion tracking components
+- Soft purple and cyan light emanating from the sensors, creating a cyberpunk-lite aesthetic
+- Subtle data visualization elements floating around the device showing real-time biometric readings
+- Clean, minimalist design with plenty of negative space for overlaid text
+- High contrast between the dark background and vibrant accent colors
+- Professional, medical-tech feel with a futuristic edge
+- Resolution: 1280x1280 pixels, ultra-high detail, cinematic lighting
+
+Style: Dark futuristic, cyberpunk-lite, medical technology, clean and professional, glowing neon accents, holographic elements, smooth gradients, professional product photography with dramatic lighting.

@@ -1,11 +1,10 @@
 <template>
-  <div class="app-shell">
-    <!-- Header -->
+  <div class="app-shell" :class="{ 'mobile-frame': mobileMode }">
     <header class="app-header">
       <div class="header-content">
         <div class="header-left">
           <router-link to="/" class="brand-link">
-            <img src="/project_logo.png" alt="Senseware" class="brand-logo" />
+            <img src="/logo.png" alt="Senseware" class="brand-logo" />
             <div>
               <h1 class="brand-title">Senseware</h1>
               <p class="brand-subtitle">Caregiver Monitor</p>
@@ -13,18 +12,18 @@
           </router-link>
         </div>
         <div class="header-right">
-          <router-link to="/" class="nav-home">
+          <router-link to="/" class="nav-home" title="Home">
             <Home :size="16" />
-            <span>Home</span>
           </router-link>
           <ConnectionPanel />
+          <button class="btn-viewport" :class="{ active: mobileMode }" @click="mobileMode = !mobileMode" title="Toggle mobile preview">
+            <Smartphone :size="16" />
+          </button>
         </div>
       </div>
     </header>
 
-    <!-- Main Content -->
     <main class="app-main">
-      <!-- Vitals Cards -->
       <section class="vitals-row">
         <VitalsCard
           key="hr"
@@ -64,14 +63,20 @@
         />
       </section>
 
-      <!-- Chart + Alert Log -->
+      <section class="stats-row">
+        <SessionStats />
+      </section>
+
+      <section class="gauge-row">
+        <AnomalyGauge />
+      </section>
+
       <section class="dashboard-grid">
         <LiveChart />
         <AlertLog />
       </section>
     </main>
 
-    <!-- Footer -->
     <footer class="app-footer">
       <p>Senseware Wearable System &middot; Connects via <strong>HTTP</strong> to ESP32 on port 81</p>
     </footer>
@@ -80,14 +85,17 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
-import { Home } from 'lucide-vue-next'
+import { Home, Smartphone } from 'lucide-vue-next'
 import ConnectionPanel from '../components/ConnectionPanel.vue'
 import VitalsCard from '../components/VitalsCard.vue'
 import LiveChart from '../components/LiveChart.vue'
 import AlertLog from '../components/AlertLog.vue'
+import SessionStats from '../components/SessionStats.vue'
+import AnomalyGauge from '../components/AnomalyGauge.vue'
 import { useTelemetry } from '../composables/useTelemetry.js'
 
 const ws = useTelemetry()
+const mobileMode = ref(false)
 
 const heartRate = ref(0)
 const spo2 = ref(0)
@@ -106,7 +114,6 @@ onMounted(() => {
     })
   )
 
-  // Reset values on disconnect
   unsubscribers.push(
     ws.manager.on('stateChange', (newState) => {
       if (newState === 'disconnected') {
@@ -129,10 +136,33 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
-  overflow-y: auto;
+ overflow-y: auto;
+  container-type: inline-size;
+  container-name: dashboard;
 }
 
-/* Header */
+.app-shell.mobile-frame .app-main {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.app-shell.mobile-frame {
+  max-width: 393px;
+  aspect-ratio: 9 / 19.5;
+  max-height: calc(100vh - 2rem);
+  margin: 1rem auto;
+  border-radius: 40px;
+  border: 3px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 0 0 8px #1a1a2e,
+    0 0 0 10px rgba(255, 255, 255, 0.06),
+    0 0 60px rgba(139, 92, 246, 0.12);
+  overflow: hidden;
+  height: min(calc(100vh - 2rem), calc(393px * 19.5 / 9));
+  background: var(--bg-primary);
+}
+
 .app-header {
   background: rgba(11, 9, 20, 0.85);
   border-bottom: 1px solid var(--border);
@@ -141,6 +171,11 @@ onUnmounted(() => {
   top: 0;
   z-index: 100;
   backdrop-filter: blur(12px);
+}
+
+.mobile-frame .app-header {
+  border-radius: 37px 37px 0 0;
+  padding: 0.6rem 1.25rem;
 }
 
 .header-content {
@@ -198,12 +233,13 @@ onUnmounted(() => {
 .nav-home {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
   font-size: 0.82rem;
   font-weight: 500;
   color: var(--text-secondary);
   text-decoration: none;
-  padding: 0.4rem 0.75rem;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.04);
@@ -216,7 +252,32 @@ onUnmounted(() => {
   background: var(--card-bg-hover);
 }
 
-/* Main Content */
+.btn-viewport {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.btn-viewport:hover {
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.btn-viewport.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(139, 92, 246, 0.12);
+}
+
 .app-main {
   flex: 1;
   max-width: 1200px;
@@ -226,16 +287,29 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+  min-width: 0;
 }
 
-/* Vitals Row — 4 cards */
 .vitals-row {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 1rem;
 }
 
-/* Dashboard Grid: Chart + Alert Log side by side on desktop */
+.vitals-row > * {
+  min-width: 0;
+}
+
+.stats-row {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+
+.gauge-row {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+
 .dashboard-grid {
   display: grid;
   grid-template-columns: 1.5fr 1fr;
@@ -243,11 +317,20 @@ onUnmounted(() => {
   align-items: start;
 }
 
-/* Footer */
+.dashboard-grid > * {
+  min-width: 0;
+  overflow: hidden;
+}
+
 .app-footer {
   padding: 1rem 1.5rem;
   border-top: 1px solid var(--border);
   text-align: center;
+}
+
+.mobile-frame .app-footer {
+  border-radius: 0 0 37px 37px;
+  padding: 0.75rem 1rem;
 }
 
 .app-footer p {
@@ -259,7 +342,6 @@ onUnmounted(() => {
   color: var(--text-secondary);
 }
 
-/* Responsive */
 @media (max-width: 900px) {
   .dashboard-grid {
     grid-template-columns: 1fr;
@@ -293,6 +375,53 @@ onUnmounted(() => {
   .app-main {
     padding: 1rem;
     gap: 1rem;
+  }
+}
+
+@container dashboard (max-width: 500px) {
+  .vitals-row {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.5rem;
+  }
+
+  .app-main {
+    padding: 0.6rem;
+    gap: 0.6rem;
+  }
+
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+    gap: 0.6rem;
+  }
+
+  .header-content {
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  .header-right {
+    gap: 0.4rem;
+  }
+
+  .brand-subtitle {
+    display: none;
+  }
+
+  .nav-home {
+    display: flex;
+  }
+
+  .btn-viewport {
+    display: none;
+  }
+
+  .brand-logo {
+    height: 22px;
+    margin-right: 0.3rem;
+  }
+
+  .brand-title {
+    font-size: 0.95rem;
   }
 }
 </style>

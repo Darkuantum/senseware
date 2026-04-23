@@ -9,15 +9,35 @@
     <!-- ===== HERO ===== -->
     <section class="hero" id="hero">
       <div class="hero-bg">
+        <div v-if="heroImages.length > 0" class="hero-slider">
+          <img
+            v-for="(img, i) in heroImages"
+            :key="i"
+            :src="img"
+            :class="['hero-slide', { active: currentSlide === i }]"
+            alt="Senseware wearable stress detection device"
+          />
+        </div>
+        <div v-if="heroImages.length > 0" class="hero-overlay" />
         <div class="orb orb-1" />
         <div class="orb orb-2" />
         <div class="orb orb-3" />
         <div class="orb orb-4" />
       </div>
 
+      <div v-if="heroImages.length > 1" class="hero-dots">
+        <button
+          v-for="(_, i) in heroImages"
+          :key="i"
+          :class="['dot', { active: currentSlide === i }]"
+          @click="goToSlide(i)"
+          :aria-label="`Slide ${i + 1}`"
+        />
+      </div>
+
       <nav class="hero-nav">
         <router-link to="/" class="nav-brand">
-            <img src="/project_logo.png" alt="Senseware" class="nav-logo" />
+            <img src="/logo.png" alt="Senseware" class="nav-logo" />
           </router-link>
         <div class="nav-links">
           <a href="#about">About</a>
@@ -63,9 +83,13 @@
       <div class="section-inner">
         <div class="about-grid">
           <div class="about-image reveal">
-            <div class="image-placeholder">
-              <Camera :size="32" />
-              <span>Image Placeholder</span>
+            <div class="about-visual">
+              <div class="about-visual-pulse"></div>
+              <div class="about-visual-pulse about-visual-pulse-2"></div>
+              <div class="about-visual-icon">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+              </div>
+              <p class="about-visual-label">Non-invasive wearable sensor</p>
             </div>
           </div>
           <div class="about-text reveal">
@@ -180,7 +204,7 @@
           <router-link to="/dashboard">Dashboard</router-link>
           <router-link to="/docs">Docs</router-link>
           <a href="#about">About</a>
-          <a href="https://github.com" target="_blank" rel="noopener">GitHub</a>
+          <a href="https://github.com/Darkuantum/senseware" target="_blank" rel="noopener">GitHub</a>
         </div>
         <p class="footer-copy">&copy; 2026 Senseware &mdash; SUTD</p>
       </div>
@@ -189,12 +213,11 @@
 </template>
 
 <script setup>
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, computed } from 'vue'
 import {
   MonitorSmartphone,
   ArrowDown,
   ChevronDown,
-  Camera,
   Activity,
   Brain,
   Bell,
@@ -205,6 +228,30 @@ import {
   Code2,
   AlertTriangle,
 } from 'lucide-vue-next'
+
+const heroImageModules = import.meta.glob('/public/images/hero/*.{jpg,jpeg,png,webp}', { eager: true })
+const heroImages = Object.keys(heroImageModules)
+  .sort()
+  .map((path) => path.replace('/public', ''))
+
+const currentSlide = ref(heroImages.length > 0 ? 0 : -1)
+let slideInterval = null
+
+const SLIDE_DELAY = 5000
+
+function goToSlide(i) {
+  currentSlide.value = i
+  resetInterval()
+}
+
+function nextSlide() {
+  currentSlide.value = (currentSlide.value + 1) % heroImages.length
+}
+
+function resetInterval() {
+  if (slideInterval) clearInterval(slideInterval)
+  slideInterval = setInterval(nextSlide, SLIDE_DELAY)
+}
 
 // Steps data — using iconName strings for v-if rendering
 const steps = [
@@ -279,6 +326,7 @@ let observer = null
 
 onMounted(() => {
   httpSupported.value = typeof window !== 'undefined' && 'fetch' in window
+  if (heroImages.length > 1) resetInterval()
 
   observer = new IntersectionObserver(
     (entries) => {
@@ -297,6 +345,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (observer) observer.disconnect()
+  if (slideInterval) clearInterval(slideInterval)
 })
 </script>
 
@@ -347,6 +396,73 @@ onUnmounted(() => {
   inset: 0;
   overflow: hidden;
   pointer-events: none;
+}
+
+/* Slider */
+.hero-slider {
+  position: absolute;
+  inset: 0;
+}
+
+.hero-slide {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 1.2s ease-in-out;
+  filter: brightness(0.55) saturate(0.7);
+  transform: scale(1.04);
+}
+
+.hero-slide.active {
+  opacity: 1;
+}
+
+.hero-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    180deg,
+    rgba(11, 9, 20, 0.6) 0%,
+    rgba(11, 9, 20, 0.45) 40%,
+    rgba(11, 9, 20, 0.7) 100%
+  );
+}
+
+/* Dots */
+.hero-dots {
+  position: absolute;
+  bottom: 4.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 0.5rem;
+  z-index: 6;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.35);
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.dot.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.5);
+  transform: scale(1.25);
+}
+
+.dot:hover:not(.active) {
+  border-color: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.15);
 }
 
 .orb {
@@ -425,8 +541,8 @@ onUnmounted(() => {
   justify-content: space-between;
   padding: 1.25rem 2rem;
   z-index: 10;
-  background: rgba(11, 9, 20, 0.7);
-  backdrop-filter: blur(12px);
+  background: rgba(11, 9, 20, 0.5);
+  backdrop-filter: blur(16px);
 }
 
 .nav-brand {
@@ -475,7 +591,7 @@ onUnmounted(() => {
 /* Hero content */
 .hero-content {
   max-width: 680px;
-  z-index: 5;
+  z-index: 8;
 }
 
 .hero-badge {
@@ -638,19 +754,54 @@ onUnmounted(() => {
   align-items: center;
 }
 
-.image-placeholder {
+.about-visual {
   width: 100%;
   aspect-ratio: 4 / 3;
-  border: 2px dashed var(--border);
   border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.08), rgba(0, 229, 255, 0.06));
+  border: 1px solid rgba(139, 92, 246, 0.15);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0.75rem;
-  color: var(--text-muted);
-  font-size: 0.9rem;
-  background: var(--card-bg);
+  gap: 1rem;
+  position: relative;
+  overflow: hidden;
+}
+
+.about-visual-icon {
+  color: var(--accent);
+  position: relative;
+  z-index: 1;
+}
+
+.about-visual-label {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  font-weight: 500;
+  position: relative;
+  z-index: 1;
+}
+
+.about-visual-pulse {
+  position: absolute;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: rgba(139, 92, 246, 0.12);
+  animation: pulse-ring 3s ease-in-out infinite;
+}
+
+.about-visual-pulse-2 {
+  width: 180px;
+  height: 180px;
+  background: rgba(0, 229, 255, 0.06);
+  animation-delay: 1.5s;
+}
+
+@keyframes pulse-ring {
+  0%, 100% { transform: scale(0.8); opacity: 0.5; }
+  50% { transform: scale(1.2); opacity: 1; }
 }
 
 .about-text p {

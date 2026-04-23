@@ -1,7 +1,7 @@
 # AGENTS.md: Senseware Implementation Plan
 
 ## System Directive
-**Target Hardware:** YD-ESP32 Type-A (ESP32-WROOM-32, FQBN: esp32:esp32:esp32)
+**Target Hardware:** YD-ESP32 Type-A (ESP32-WROOM-32, FQBN: esp32:esp32:dfrobot_firebeetle2_esp32e, flashed via DFRobot FireBeetle 2 ESP32-E profile)
 **Core Components:** MAX30102 (PPG), MPU-9250 (IMU), OYMotion Analog EMG, SH1106 OLED, LRA Vibration Motor.
 **Objective:** Execute the staged development of an autonomous, edge-AI physiological monitoring wearable.
 

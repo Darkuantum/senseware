@@ -1,16 +1,5 @@
 <template>
   <div class="docs-page">
-    <!-- Sticky Header -->
-    <header class="docs-header">
-      <div class="header-inner">
-        <router-link to="/" class="back-link">
-          <ArrowLeft :size="16" />
-          Back to Home
-        </router-link>
-        <h1 class="header-title">Technical Documentation</h1>
-      </div>
-    </header>
-
     <div class="docs-layout">
       <!-- Sidebar TOC -->
       <aside class="docs-sidebar" :class="{ 'sidebar-open': sidebarOpen }">
@@ -19,6 +8,14 @@
           <span>Contents</span>
           <ChevronDown :size="14" class="toggle-chevron" :class="{ rotated: sidebarOpen }" />
         </button>
+        <div class="sidebar-brand">
+          <router-link to="/" class="sidebar-brand-link">
+            <img src="/logo.png" alt="Senseware" class="sidebar-logo" />
+            <span class="sidebar-brand-name">Senseware</span>
+            <ArrowLeft :size="14" class="sidebar-home-icon" />
+          </router-link>
+          <p class="sidebar-home-hint">Back to Home</p>
+        </div>
         <nav class="toc-nav" v-show="sidebarOpen || !isMobile">
           <ul class="toc-list">
             <li v-for="section in sections" :key="section.id">
@@ -78,6 +75,15 @@
             </table>
           </div>
           <MermaidDiagram :chart="i2cChart" />
+          <div class="image-grid three-col">
+            <img src="/images/hardware/enclosure_case_top_view.jpg" alt="3D-printed enclosure case, top view" class="doc-image" />
+            <img src="/images/hardware/enclosure_curved_panel.jpg" alt="3D-printed curved panel" class="doc-image" />
+            <img src="/images/hardware/enclosure_sensor_window.jpg" alt="3D-printed sensor window panel" class="doc-image" />
+          </div>
+          <h3 class="sub-heading">Electronics</h3>
+          <div class="doc-image-single">
+            <img src="/images/hardware/esp32_breadboard_complete.jpg" alt="Complete ESP32 breadboard circuit" />
+          </div>
         </section>
 
         <!-- Section 3: Firmware Architecture -->
@@ -262,6 +268,9 @@
               <p class="feature-desc">SSE connection manager with 2-second reconnect debounce for silent recovery.</p>
             </div>
           </div>
+          <div class="doc-image-single">
+            <img src="/images/dashboard/dashboard_screenshot.jpg" alt="Senseware caregiver dashboard" />
+          </div>
           <h3 class="sub-heading">Real-Time Components</h3>
           <div class="table-wrap">
             <table class="doc-table">
@@ -285,6 +294,7 @@
             The battery connects to the ESP32 board's VIN pin. A bulk capacitor (100–470µF) across VIN-GND is
             recommended to absorb WiFi transmit current transients.
           </p>
+
           <div class="spec-grid">
             <div class="spec-item"><span class="spec-label">Battery</span><span class="spec-value">3.7V 1600mAh LiPo</span></div>
             <div class="spec-item"><span class="spec-label">Charger</span><span class="spec-value">TP4056 (ZJ-CHC-V2)</span></div>
@@ -299,7 +309,7 @@
 
 <script setup>
 import { ref, reactive, onMounted, onUnmounted } from 'vue'
-import { ArrowLeft, Menu, ChevronDown } from 'lucide-vue-next'
+import { Menu, ChevronDown, ArrowLeft } from 'lucide-vue-next'
 import MermaidDiagram from '../components/MermaidDiagram.vue'
 
 // ===== TOC Sections =====
@@ -475,49 +485,6 @@ const sseChart = `sequenceDiagram
   background: var(--bg-primary);
 }
 
-/* ===== Sticky Header ===== */
-.docs-header {
-  position: sticky;
-  top: 0;
-  z-index: 100;
-  background: rgba(11, 9, 20, 0.9);
-  backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--border);
-  padding: 0.85rem 2rem;
-}
-
-.header-inner {
-  max-width: 1280px;
-  margin: 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 1.25rem;
-}
-
-.back-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.88rem;
-  font-weight: 600;
-  color: var(--accent);
-  text-decoration: none;
-  transition: color var(--transition-fast);
-  white-space: nowrap;
-}
-
-.back-link:hover {
-  color: var(--accent-hover);
-}
-
-.header-title {
-  font-size: 1.15rem;
-  font-weight: 700;
-  color: var(--text-primary);
-  letter-spacing: -0.02em;
-  margin: 0;
-}
-
 /* ===== Layout ===== */
 .docs-layout {
   display: flex;
@@ -536,6 +503,60 @@ const sseChart = `sequenceDiagram
   overflow-y: auto;
   border-right: 1px solid var(--border);
   background: var(--card-bg);
+}
+
+.sidebar-brand {
+  margin-bottom: 1.25rem;
+}
+
+.sidebar-brand-link {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-decoration: none;
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  transition: all var(--transition-fast);
+}
+
+.sidebar-brand-link:hover {
+  border-color: var(--border-hover);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.sidebar-brand-link:hover .sidebar-home-icon {
+  color: var(--accent);
+}
+
+.sidebar-logo {
+  height: 22px;
+  width: auto;
+  object-fit: contain;
+}
+
+.sidebar-brand-name {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  flex: 1;
+}
+
+.sidebar-brand-link:hover .sidebar-brand-name {
+  color: var(--accent);
+}
+
+.sidebar-home-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: color var(--transition-fast);
+}
+
+.sidebar-home-hint {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  margin: 0.3rem 0 0 0.6rem;
 }
 
 .sidebar-toggle {
@@ -621,6 +642,61 @@ const sseChart = `sequenceDiagram
   margin-bottom: 1.5rem;
   box-shadow: var(--shadow-sm);
   scroll-margin-top: 72px;
+}
+
+.image-grid {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.image-grid.three-col {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.image-grid.two-col {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.doc-image {
+  width: 100%;
+  height: 200px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  object-fit: cover;
+  transition: border-color var(--transition-fast);
+ cursor: pointer;
+}
+
+.doc-image:hover {
+  border-color: var(--border-hover);
+}
+
+.doc-image-single {
+  margin-top: 1rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.doc-image-single img {
+  width: 100%;
+  max-height: 360px;
+  object-fit: cover;
+  display: block;
+}
+
+@media (max-width: 900px) {
+  .image-grid.three-col {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .image-grid.three-col,
+  .image-grid.two-col {
+    grid-template-columns: 1fr;
+  }
 }
 
 .section-label {
@@ -833,10 +909,6 @@ const sseChart = `sequenceDiagram
 }
 
 @media (max-width: 640px) {
-  .docs-header {
-    padding: 0.75rem 1rem;
-  }
-
   .docs-main {
     padding: 1rem;
   }

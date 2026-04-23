@@ -5,6 +5,7 @@ build/
 compile_commands.json
 bin/
 senseware_code/build/
+.arduino/
 
 # Python
 __pycache__/
@@ -39,6 +40,9 @@ models/
 
 # Logs
 *.log
+
+# Telegram chat export
+ChatExport_2026-04-23/
 
 # MCP memory persistence
 memory.json
