@@ -69,7 +69,7 @@ const timeOptions = [
   { label: '5m', value: 300 },
 ]
 
-// Plain (non-reactive) arrays — avoid Chart.js reactivity loop
+// Plain (non-reactive) arrays: avoid Chart.js reactivity loop
 const _labels = []
 const _hrData = []
 const _spo2Data = []

@@ -92,7 +92,7 @@ onMounted(() => {
     })
   )
 
-  // Alert state — go into alerting mode when anomaly detected, return after 5s
+  // Alert state: go into alerting mode when anomaly detected, return after 5s
   unsubscribers.push(
     ws.manager.on('alert', ({ alert }) => {
       if (alert) {

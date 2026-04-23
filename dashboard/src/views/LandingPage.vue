@@ -57,7 +57,7 @@
           <p class="hero-subtitle">Edge-AI Wearable Stress Detection for Autism Care</p>
           <p class="hero-tagline">
             A compassionate wearable system that learns your calm baseline and detects
-            physiological stress in real-time — empowering caregivers with the visibility
+            physiological stress in real-time, empowering caregivers with the visibility
             they need for timely, gentle intervention.
           </p>
           <div class="hero-actions">
@@ -83,14 +83,7 @@
       <div class="section-inner">
         <div class="about-grid">
           <div class="about-image reveal">
-            <div class="about-visual">
-              <div class="about-visual-pulse"></div>
-              <div class="about-visual-pulse about-visual-pulse-2"></div>
-              <div class="about-visual-icon">
-                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
-              </div>
-              <p class="about-visual-label">Non-invasive wearable sensor</p>
-            </div>
+            <img src="/images/about/Gemini_Generated_Image_vfk7z9vfk7z9vfk7.png" alt="Caregiver and child" class="about-photo" />
           </div>
           <div class="about-text reveal">
             <p class="section-label">Understanding the Challenge</p>
@@ -105,14 +98,14 @@
             <p>
               Current stress monitoring solutions require expensive clinical-grade equipment,
               specialized training, or invasive setups that are impractical for everyday life.
-              Caregivers — whether parents, teachers, or support workers — are left to rely
+              Caregivers, whether parents, teachers, or support workers, are left to rely
               on behavioral observation alone, often detecting distress only after it has
               already escalated.
             </p>
             <p>
               <strong class="text-accent">Senseware changes this.</strong> By combining
               wearable biosensors with on-device machine learning, it provides a continuous,
-              non-invasive window into physiological state — giving caregivers the real-time
+              non-invasive window into physiological state, giving caregivers the real-time
               insight they need to offer support before a crisis develops.
             </p>
           </div>
@@ -154,7 +147,7 @@
           <h2 class="section-heading">Purpose-driven technology</h2>
           <p class="section-desc">
             Every component was chosen for reliability, efficiency, and the ability to run
-            intelligently at the edge — no cloud, no latency, no privacy compromise.
+            intelligently at the edge: no cloud, no latency, no privacy compromise.
           </p>
         </div>
 
@@ -206,7 +199,7 @@
           <a href="#about">About</a>
           <a href="https://github.com/Darkuantum/senseware" target="_blank" rel="noopener">GitHub</a>
         </div>
-        <p class="footer-copy">&copy; 2026 Senseware &mdash; SUTD</p>
+<p class="footer-copy">© 2026 Senseware | SUTD</p>
       </div>
     </footer>
   </div>
@@ -253,18 +246,18 @@ function resetInterval() {
   slideInterval = setInterval(nextSlide, SLIDE_DELAY)
 }
 
-// Steps data — using iconName strings for v-if rendering
+// Steps data: using iconName strings for v-if rendering
 const steps = [
   {
     iconName: 'Activity',
     title: 'Sense',
-    desc: 'Wearable sensors continuously monitor heart rate (PPG), muscle tension (EMG), and motion patterns (IMU) — all sampled at high frequency for clinical-grade fidelity.',
+    desc: 'Wearable sensors continuously monitor heart rate (PPG), muscle tension (EMG), and motion patterns (IMU) at high frequency for clinical-grade fidelity.',
     colorClass: 'step-sense',
   },
   {
     iconName: 'Brain',
     title: 'Detect',
-    desc: 'A lightweight autoencoder running natively on the ESP32 learns your personal calm baseline. When physiological patterns deviate, it detects stress anomalies in real-time — no cloud needed.',
+    desc: 'A lightweight autoencoder running natively on the ESP32 learns your personal calm baseline. When physiological patterns deviate, it detects stress anomalies in real-time with no cloud needed.',
     colorClass: 'step-detect',
   },
   {
@@ -275,7 +268,7 @@ const steps = [
   },
 ]
 
-// Tech stack data — using iconName strings for v-if rendering
+// Tech stack data: using iconName strings for v-if rendering
 const techStack = [
   {
     iconName: 'Cpu',
@@ -290,7 +283,7 @@ const techStack = [
   {
     iconName: 'Wifi',
     name: 'HTTP',
-    desc: 'Real-time Server-Sent Events push from ESP32 — no app required',
+    desc: 'Real-time Server-Sent Events push from ESP32 with no app required',
   },
   {
     iconName: 'Layers',
@@ -309,13 +302,13 @@ const techStack = [
   },
 ]
 
-// Team data — 5 real members
+// Team data: 5 real members
 const team = [
-  { name: 'Alvin Teo', role: 'Embedded Systems', initials: 'AT', color: 'linear-gradient(135deg, #8B5CF6, #6366F1)' },
-  { name: 'Nathan Ly', role: 'Machine Learning', initials: 'NL', color: 'linear-gradient(135deg, #FDBA74, #F59E0B)' },
-  { name: 'Gurnoor Bedi', role: 'Signal Processing', initials: 'GB', color: 'linear-gradient(135deg, #10B981, #6366F1)' },
-  { name: 'Jennifer Wong', role: 'UX / Design', initials: 'JW', color: 'linear-gradient(135deg, #E0E7FF, #8B5CF6)' },
-  { name: 'Kaiwen Ong', role: 'Clinical Research', initials: 'KO', color: 'linear-gradient(135deg, #F59E0B, #EF4444)' },
+  { name: 'Alvin Teo', role: 'Project Manager & Clinical Research', initials: 'AT', color: 'linear-gradient(135deg, #8B5CF6, #6366F1)' },
+  { name: 'Nathan Ly', role: 'ML Engineer & Web Developer', initials: 'NL', color: 'linear-gradient(135deg, #FDBA74, #F59E0B)' },
+  { name: 'Gurnoor Bedi', role: 'Circuit Design & Integration', initials: 'GB', color: 'linear-gradient(135deg, #10B981, #6366F1)' },
+  { name: 'Jennifer Wong', role: 'Hardware Design & UI/UX', initials: 'JW', color: 'linear-gradient(135deg, #E0E7FF, #8B5CF6)' },
+  { name: 'Kaiwen Ong', role: 'Structural Hardware & Enclosure', initials: 'KO', color: 'linear-gradient(135deg, #F59E0B, #EF4444)' },
 ]
 
 // ===== Scroll Reveal (IntersectionObserver) =====
@@ -354,6 +347,7 @@ onUnmounted(() => {
 .landing {
   overflow-x: hidden;
   overflow-y: auto;
+  height: 100%;
 }
 
 /* ===== BROWSER COMPATIBILITY WARNING ===== */
@@ -754,54 +748,21 @@ onUnmounted(() => {
   align-items: center;
 }
 
-.about-visual {
-  width: 100%;
-  aspect-ratio: 4 / 3;
-  border-radius: var(--radius-lg);
-  background: linear-gradient(135deg, rgba(139, 92, 246, 0.08), rgba(0, 229, 255, 0.06));
-  border: 1px solid rgba(139, 92, 246, 0.15);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1rem;
-  position: relative;
+.about-image {
   overflow: hidden;
+  border-radius: var(--radius-lg);
 }
 
-.about-visual-icon {
-  color: var(--accent);
-  position: relative;
-  z-index: 1;
+.about-photo {
+  width: 100%;
+  display: block;
+  border-radius: var(--radius-lg);
+  object-fit: cover;
+  transition: transform var(--transition-slow);
 }
 
-.about-visual-label {
-  color: var(--text-secondary);
-  font-size: 0.85rem;
-  font-weight: 500;
-  position: relative;
-  z-index: 1;
-}
-
-.about-visual-pulse {
-  position: absolute;
-  width: 120px;
-  height: 120px;
-  border-radius: 50%;
-  background: rgba(139, 92, 246, 0.12);
-  animation: pulse-ring 3s ease-in-out infinite;
-}
-
-.about-visual-pulse-2 {
-  width: 180px;
-  height: 180px;
-  background: rgba(0, 229, 255, 0.06);
-  animation-delay: 1.5s;
-}
-
-@keyframes pulse-ring {
-  0%, 100% { transform: scale(0.8); opacity: 0.5; }
-  50% { transform: scale(1.2); opacity: 1; }
+.about-photo:hover {
+  transform: scale(1.03);
 }
 
 .about-text p {

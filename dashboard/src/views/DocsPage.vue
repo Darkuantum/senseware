@@ -32,7 +32,7 @@
       <!-- Main Content -->
       <main class="docs-main">
         <!-- Section 1: System Overview -->
-        <section id="overview" class="doc-section" data-section="overview">
+        <section id="overview" class="doc-section doc-section-alt" data-section="overview">
           <div class="section-label">Overview</div>
           <h2 class="section-heading">System Overview</h2>
           <p class="section-text">
@@ -50,7 +50,7 @@
           <h2 class="section-heading">Hardware Components</h2>
           <p class="section-text">
             The wearable is built around the YD-ESP32 Type-A (ESP32-WROOM-32), with all sensors communicating
-            over shared I2C bus (except EMG which uses analog input). Below is the complete hardware manifest.
+            over a shared I2C bus (except EMG which uses analog input). Below is the complete hardware manifest.
           </p>
           <div class="table-wrap">
             <table class="doc-table">
@@ -64,13 +64,13 @@
                 </tr>
               </thead>
               <tbody>
-                <tr><td>MCU</td><td>YD-ESP32 Type-A</td><td>—</td><td>—</td><td>Main processor, WiFi, ML inference</td></tr>
+                <tr><td>MCU</td><td>YD-ESP32 Type-A</td><td>&mdash;</td><td>&mdash;</td><td>Main processor, WiFi, ML inference</td></tr>
                 <tr><td>EMG Sensor</td><td>OYMotion SEN0240</td><td>Analog GPIO 34</td><td>EMG_PIN</td><td>Muscle tension measurement</td></tr>
                 <tr><td>PPG Heart Rate</td><td>MAX30102</td><td>I2C (0x57)</td><td>SDA=21, SCL=22</td><td>Heart rate (beat detection) + SpO2 (red/IR ratio)</td></tr>
                 <tr><td>IMU</td><td>MPU-9250</td><td>I2C (0x68)</td><td>SDA=21, SCL=22</td><td>Motion magnitude</td></tr>
                 <tr><td>Display</td><td>SH1106 OLED 128×64</td><td>I2C (0x3C)</td><td>SDA=21, SCL=22</td><td>Real-time metrics</td></tr>
                 <tr><td>Haptic Motor</td><td>LRA</td><td>LEDC PWM</td><td>GPIO 25</td><td>Gentle vibration alerts</td></tr>
-                <tr><td>Power</td><td>TP4056 + 3.7V 1600mAh LiPo</td><td>—</td><td>VIN</td><td>Battery power with charging</td></tr>
+                <tr><td>Power</td><td>TP4056 + 3.7V 1600mAh LiPo</td><td>&mdash;</td><td>VIN</td><td>Battery power with charging</td></tr>
               </tbody>
             </table>
           </div>
@@ -103,19 +103,20 @@
   <span class="code-type">float</span> spo2;
   <span class="code-type">float</span> emg_envelope;
   <span class="code-type">float</span> motion_magnitude;
-  <span class="code-type">float</span> mse;
-  <span class="code-type">bool</span>  anomaly;
-};</pre></div>
+  <span class="code-type">unsigned long</span> timestamp;
+};
+<span class="code-cmt">// MSE and anomaly flag are global variables, not struct fields</span></pre></div>
           <p class="section-text">
             The shared state is protected by a FreeRTOS mutex. When the EMG task acquires the mutex, it writes
             the latest filtered EMG value; the sensor task writes heart rate, SpO2, and motion magnitude.
-            The inference task reads the full struct to feed the autoencoder. A watchdog timer monitors the
-            I2C bus — if communication stalls for >500 ms, it resets the I2C peripheral and reinitializes all devices.
+            The inference task reads the full struct to feed the autoencoder. A software timeout in the display task monitors the
+            I2C bus; if a display cycle takes longer than 2 seconds (indicating a hung bus), it recovers the I2C peripheral and
+            reinitializes the OLED display.
           </p>
         </section>
 
         <!-- Section 4: Signal Processing -->
-        <section id="signal-processing" class="doc-section" data-section="signal-processing">
+        <section id="signal-processing" class="doc-section doc-section-alt" data-section="signal-processing">
           <div class="section-label">Signal Processing</div>
           <h2 class="section-heading">Signal Processing Pipeline</h2>
           <h3 class="sub-heading">EMG Processing</h3>
@@ -129,7 +130,7 @@
 
           <h3 class="sub-heading">Motion Processing</h3>
           <p class="section-text">
-            The MPU-9250 accelerometer data is polled at 20 Hz. The three-axis acceleration values
+            The MPU-9250 accelerometer data is polled at ~12.5 Hz (every other cycle of the 25 Hz sensor task). The three-axis acceleration values
             (ax, ay, az) are combined into a single motion magnitude vector:
           </p>
           <div class="code-block"><pre>motion_magnitude = <span class="code-fn">sqrt</span>(ax² + ay² + az²)</pre></div>
@@ -144,13 +145,13 @@
         </section>
 
         <!-- Section 5: Machine Learning -->
-        <section id="ml" class="doc-section" data-section="ml">
+        <section id="ml" class="doc-section doc-section-alt" data-section="ml">
           <div class="section-label">Machine Learning</div>
           <h2 class="section-heading">Machine Learning Pipeline</h2>
           <p class="section-text">
             The anomaly detection model is a lightweight autoencoder trained on the user's personal
-            calm baseline data. It learns to reconstruct normal physiological patterns — high reconstruction
-            error indicates deviation from the learned baseline.
+            calm baseline data. It learns to reconstruct normal physiological patterns. Instances of high reconstruction
+            error indicate deviation from the learned baseline.
           </p>
           <MermaidDiagram :chart="mlPipelineChart" />
 
@@ -203,7 +204,7 @@
         </section>
 
         <!-- Section 7: Communication Protocol -->
-        <section id="communication" class="doc-section" data-section="communication">
+        <section id="communication" class="doc-section doc-section-alt" data-section="communication">
           <div class="section-label">Communication</div>
           <h2 class="section-heading">Communication Protocol</h2>
           <p class="section-text">
@@ -226,7 +227,11 @@
           </div>
 
           <h3 class="sub-heading">SSE Payload Format</h3>
-          <div class="code-block"><pre>{
+          <div class="doc-callout">
+            <p class="section-text" style="margin-bottom: 0.75rem;">
+              Each SSE event delivers a JSON telemetry snapshot with the following fields:
+            </p>
+            <div class="code-block" style="margin: 0;"><pre>{
   <span class="code-key">"hr"</span>: <span class="code-num">72.0</span>,
   <span class="code-key">"spo2"</span>: <span class="code-num">98.0</span>,
   <span class="code-key">"emg"</span>: <span class="code-num">50.0</span>,
@@ -235,6 +240,14 @@
   <span class="code-key">"acc"</span>: <span class="code-num">95.0</span>,
   <span class="code-key">"anomaly"</span>: <span class="code-num">0</span>
 }</pre></div>
+          </div>
+          <div class="doc-callout">
+            <p class="section-text" style="margin: 0;">
+              The <code>acc</code> field is a heuristic confidence metric (0-100%) computed as
+              100 &times; e<sup>-MSE/threshold</sup>, indicating how closely the current reading
+              matches the learned baseline.
+            </p>
+          </div>
           <p class="section-text">
             CORS is enabled with <code>Access-Control-Allow-Origin: *</code> to allow cross-origin access from any
             browser connecting to the ESP32's WiFi access point.
@@ -253,7 +266,7 @@
           <div class="feature-grid">
             <div class="feature-card">
               <h4 class="feature-title">Live Telemetry</h4>
-              <p class="feature-desc">Chart.js rolling 60-point window with 3 y-axes for HR, EMG, and motion magnitude.</p>
+              <p class="feature-desc">Chart.js rolling line chart (30s to 5m window) with 3 y-axes for HR/SpO2, EMG, and motion magnitude.</p>
             </div>
             <div class="feature-card">
               <h4 class="feature-title">Vitals Cards</h4>
@@ -269,7 +282,7 @@
             </div>
           </div>
           <div class="doc-image-single">
-            <img src="/images/dashboard/dashboard_screenshot.jpg" alt="Senseware caregiver dashboard" />
+            <img src="/images/dashboard/Screenshot 2026-04-24 050614.png" alt="Senseware caregiver dashboard" />
           </div>
           <h3 class="sub-heading">Real-Time Components</h3>
           <div class="table-wrap">
@@ -286,12 +299,12 @@
         </section>
 
         <!-- Section 9: Power System -->
-        <section id="power" class="doc-section" data-section="power">
+        <section id="power" class="doc-section doc-section-alt" data-section="power">
           <div class="section-label">Power</div>
           <h2 class="section-heading">Power System</h2>
           <p class="section-text">
             The wearable is powered by a 3.7V 1600mAh LiPo battery managed by a TP4056 (ZJ-CHC-V2) charging board.
-            The battery connects to the ESP32 board's VIN pin. A bulk capacitor (100–470µF) across VIN-GND is
+            The battery connects to the ESP32 board's VIN pin. A bulk capacitor (100 to 470µF) across VIN-GND is
             recommended to absorb WiFi transmit current transients.
           </p>
 
@@ -403,7 +416,7 @@ const firmwareChart = `flowchart TB
     EMGTask["EMG Task\nPriority 3, 1000 Hz"]
   end
   subgraph Core1["Core 1"]
-    SensorTask["Sensor Task\nPriority 2, 20 Hz"]
+    SensorTask["Sensor Task\nPriority 2, 25 Hz"]
     DisplayTask["Display Task\nPriority 1, 2 Hz"]
     SerialTask["Serial Task\nPriority 1, 1 Hz"]
     InferenceTask["Inference Task\nPriority 1, 0.5 Hz"]
@@ -644,6 +657,11 @@ const sseChart = `sequenceDiagram
   scroll-margin-top: 72px;
 }
 
+.doc-section-alt {
+  background: rgba(255, 255, 255, 0.01);
+  border-radius: var(--radius-md);
+}
+
 .image-grid {
   display: grid;
   gap: 0.75rem;
@@ -706,6 +724,20 @@ const sseChart = `sequenceDiagram
   letter-spacing: 1.5px;
   color: var(--accent);
   margin-bottom: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 2px solid rgba(139, 92, 246, 0.3);
+}
+
+.section-label::before {
+  content: '';
+  width: 3px;
+  height: 24px;
+  background: linear-gradient(to bottom, var(--accent), var(--accent-cyan));
+  border-radius: 2px;
+  flex-shrink: 0;
 }
 
 .section-heading {
@@ -743,6 +775,17 @@ const sseChart = `sequenceDiagram
   border-radius: 4px;
   font-size: 0.85em;
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.doc-callout {
+  background: rgba(139, 92, 246, 0.06);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 0.75rem 1rem;
+  margin: 1rem 0;
+  font-size: 0.88rem;
+  line-height: 1.65;
+  color: var(--text-secondary);
 }
 
 /* ===== Tables ===== */
@@ -787,7 +830,7 @@ const sseChart = `sequenceDiagram
 }
 
 .doc-table tbody tr:hover {
-  background: var(--card-bg-hover);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 /* ===== Code Blocks ===== */
@@ -830,6 +873,12 @@ const sseChart = `sequenceDiagram
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
+  transition: all var(--transition-fast);
+}
+
+.spec-item:hover {
+  border-color: var(--border-hover);
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .spec-label {
